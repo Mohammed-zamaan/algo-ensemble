@@ -6,3 +6,6 @@ results/
 *.csv
 .DS_Store
 .ipynb_checkpoints/
+# Allow package data connectors (do not ignore)
+!src/trading_ensemble/data/
+!src/trading_ensemble/data/**

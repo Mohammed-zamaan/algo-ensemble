@@ -89,30 +89,20 @@ def fetch_yf_candles(nse_symbol: str, period: str = "6mo",
         print(f"  yfinance candles error ({nse_symbol}): {e}")
     return None
 
-def fetch_smartapi_candles(symbol_token: str,
-                           interval: str = "FIFTEEN_MINUTE",
-                           days: int = 30) -> Optional[pd.DataFrame]:
-    try:
-        from smartapi import SmartConnect
-        import pyotp
-        obj = SmartConnect(api_key=os.getenv("SMARTAPI_KEY"))
-        totp = pyotp.TOTP(os.getenv("SMARTAPI_TOTP_SECRET")).now()
-        obj.generateSession(os.getenv("SMARTAPI_CLIENT_ID"),
-                            os.getenv("SMARTAPI_PASSWORD"), totp)
-        to_date   = datetime.now().strftime("%Y-%m-%d %H:%M")
-        from_date = (datetime.now()-timedelta(days=days)).strftime("%Y-%m-%d %H:%M")
-        resp = obj.getCandleData({
-            "exchange": "NSE", "symboltoken": symbol_token,
-            "interval": interval, "fromdate": from_date, "todate": to_date,
-        })
-        if resp and resp.get("data"):
-            df = pd.DataFrame(resp["data"],
-                              columns=["datetime","open","high","low","close","volume"])
-            df["datetime"] = pd.to_datetime(df["datetime"])
-            return df
-    except Exception as e:
-        print(f"  SmartAPI error: {e}")
-    return None
+def fetch_smartapi_candles(symbol_token: str, interval: str = "FIFTEEN_MINUTE", days: int = 30):
+    """Delegates to smartapi_client — single session, chunked, retry-safe."""
+    from src.trading_ensemble.data.smartapi_client import login_from_env, fetch_candles_chunked
+    from datetime import datetime, timedelta
+    session  = login_from_env()
+    end_dt   = datetime.now()
+    start_dt = end_dt - timedelta(days=days)
+    return fetch_candles_chunked(
+        session.smart, exchange="NSE", symbol_token=str(symbol_token),
+        interval=interval,
+        start=start_dt.strftime("%Y-%m-%d 0915"),
+        end=end_dt.strftime("%Y-%m-%d 1530"),
+        chunk_days=60,
+    )
 
 def fetch_candles(nse_symbol: str, symbol_token: str = None,
                   interval: str = "FIFTEEN_MINUTE") -> Optional[pd.DataFrame]:

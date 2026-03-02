@@ -91,28 +91,20 @@ def choose_regime_params(atrp_sm: float, p: StrategyParams) -> Tuple[int, int, f
 
 
 def compute_dynamic_donchian(df: pd.DataFrame, p: StrategyParams) -> pd.DataFrame:
+    """Vectorised Donchian with regime-adaptive windows. Replaces Python for-loop."""
     out = df.copy()
-    n = len(out)
-
-    up_entry = np.full(n, np.nan)
-    dn_exit = np.full(n, np.nan)
-    trail_mult_eff = np.full(n, np.nan)
-
-    highs = out["high"].to_numpy()
-    lows = out["low"].to_numpy()
-
-    for i in range(n):
-        le, lx, tm = choose_regime_params(float(out["atrp_sm"].iloc[i]), p)
-        trail_mult_eff[i] = tm
-
-        if i - le >= 0:
-            up_entry[i] = np.max(highs[i - le : i])
-        if i - lx >= 0:
-            dn_exit[i] = np.min(lows[i - lx : i])
-
-    out["don_up_entry"] = up_entry
-    out["don_dn_exit"] = dn_exit
-    out["trail_mult_eff"] = trail_mult_eff
+    out["_up_lo"]   = out["high"].shift(1).rolling(p.don_entry_lo,   min_periods=p.don_entry_lo).max()
+    out["_up_base"] = out["high"].shift(1).rolling(p.don_entry_base, min_periods=p.don_entry_base).max()
+    out["_up_hi"]   = out["high"].shift(1).rolling(p.don_entry_hi,   min_periods=p.don_entry_hi).max()
+    out["_dn_lo"]   = out["low"].shift(1).rolling(p.don_exit_lo,     min_periods=p.don_exit_lo).min()
+    out["_dn_base"] = out["low"].shift(1).rolling(p.don_exit_base,   min_periods=p.don_exit_base).min()
+    out["_dn_hi"]   = out["low"].shift(1).rolling(p.don_exit_hi,     min_periods=p.don_exit_hi).min()
+    is_hi = out["atrp_sm"] >= p.atrp_hi
+    is_lo = out["atrp_sm"] <= p.atrp_lo
+    out["don_up_entry"]   = np.where(is_hi, out["_up_hi"], np.where(is_lo, out["_up_lo"], out["_up_base"]))
+    out["don_dn_exit"]    = np.where(is_hi, out["_dn_hi"], np.where(is_lo, out["_dn_lo"], out["_dn_base"]))
+    out["trail_mult_eff"] = np.where(is_hi, p.trail_mult_hi, p.trail_mult_lo)
+    out.drop(columns=[c for c in out.columns if c.startswith("_up_") or c.startswith("_dn_")], inplace=True)
     return out
 
 

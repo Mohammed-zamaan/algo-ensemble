@@ -1,4 +1,12 @@
-comet_ml
-comet_ml
+comet-ml
+yfinance
+pandas
+numpy
+python-dotenv
+pyotp
+smartapi-python
+pycryptodome
+logzero
+websocket-client
 requests
 beautifulsoup4

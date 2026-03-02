@@ -188,3 +188,29 @@ def resolve_symbol_to_token_offline(symbol: str, *, exchange: str = "NSE", scrip
         return row["symbol"], str(row["token"])
 
     raise RuntimeError(f"Token not found or ambiguous for: {symbol}")
+
+
+def fetch_candles_live(
+    smart,
+    *,
+    exchange: str,
+    symbol_token: str,
+    interval: str,
+    start: str,
+    end: str,
+) -> "pd.DataFrame":
+    """
+    Fast, low-retry version of fetch_candles_chunked for live trading.
+    Max 3 attempts, 2s sleep cap — will not freeze the live order loop.
+    """
+    return fetch_candles_chunked(
+        smart,
+        exchange=exchange,
+        symbol_token=symbol_token,
+        interval=interval,
+        start=start,
+        end=end,
+        chunk_days=1,
+        sleep_seconds=0.5,
+        max_retries=3,
+    )

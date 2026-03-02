@@ -1,0 +1,45 @@
+
+=================================================================
+  BACKTEST SUMMARY — Last 6 Months
+  Strategy: Donchian 20-day Breakout | ATR 2.0x/1.5x
+  Capital: INR 100,000
+=================================================================
+  Total Trades    : 116
+  Wins            : 59
+  Losses          : 57
+  Win Rate        : 50.9%
+  Profit Factor   : 1.47
+  
+  Total PnL       : INR 19,167.78
+  Return on Cap   : 19.17%
+  Avg Win         : INR 1,022.19
+  Avg Loss        : INR -721.78
+  Avg Hold        : 8.9 days
+  Max Drawdown    : -4.89%
+
+  Best Trade      : SCHNEIDER-EQ  INR 1,989.52  (2026-02-06)
+  Worst Trade     : HINDCOPPER-EQ  INR -1,404.09  (2026-01-29)
+=================================================================
+
+  Exit Breakdown:
+exit_reason
+STOP_LOSS      54
+TARGET         53
+END_OF_DATA     9
+
+  Top 5 Stocks by PnL:
+symbol
+SHRIRAMFIN-EQ    6007.19
+NATIONALUM-EQ    4877.91
+HINDCOPPER-EQ    3824.28
+HINDZINC-EQ      3029.97
+DATAPATTNS-EQ    2747.88
+
+  Bottom 5 Stocks by PnL:
+symbol
+TATASTEEL-EQ   -1975.18
+BEL-EQ         -1902.46
+GRAPHITE-EQ    -1655.36
+TVSMOTOR-EQ    -1501.60
+KPITTECH-EQ    -1464.31
+=================================================================

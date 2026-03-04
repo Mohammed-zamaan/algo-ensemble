@@ -10,3 +10,5 @@ results/
 !src/trading_ensemble/data/
 !src/trading_ensemble/data/**
 __pycache__/
+credentials.json
+.env

@@ -119,17 +119,45 @@ def _commission(value: float, commission_pct: float) -> float:
     return float(value) * float(commission_pct) / 100.0
 
 
-def size_qty_no_leverage(equity: float, price: float, atr: float, p: StrategyParams) -> int:
+def compute_conviction_multiplier(conviction: int, is_crisis: bool = False) -> float:
+    """
+    Compute position size multiplier based on conviction level.
+    
+    Conviction levels:
+    - 1 (MANUAL): 0.9x
+    - 2 (ANGEL_ONE): 1.0x  
+    - 3 (BOTH): 1.1x
+    
+    Crisis regime: conviction 3 → 1.0x (suppress boost)
+    """
+    if is_crisis and conviction == 3:
+        return 1.0
+    
+    multipliers = {1: 0.9, 2: 1.0, 3: 1.1}
+    return multipliers.get(conviction, 1.0)
+
+def size_qty_with_conviction(equity: float, price: float, atr: float, 
+                             conviction: int, p: StrategyParams, 
+                             is_crisis: bool = False) -> int:
+    """Size position with conviction multiplier applied."""
     if price <= 0 or atr <= 0 or np.isnan(price) or np.isnan(atr):
         return 0
-
+    
+    # Base position size (same as before)
     qty_cash_cap = int(np.floor(equity / price))
     risk_cash = equity * (p.risk_pct / 100.0)
     stop_dist = max(p.stop_mult * atr, 1e-9)
     qty_risk = int(np.floor(risk_cash / stop_dist))
+    qty_base = max(0, min(qty_cash_cap, qty_risk))
+    
+    # Apply conviction multiplier
+    conviction_mult = compute_conviction_multiplier(conviction, is_crisis)
+    qty_final = int(np.floor(qty_base * conviction_mult))
+    
+    # Cap at 1.1x of base (max boost)
+    qty_max = int(np.floor(qty_base * 1.1))
+    return max(0, min(qty_final, qty_max))
 
-    qty = max(0, min(qty_cash_cap, qty_risk))
-    return qty
 
 
 def backtest_long_only(df: pd.DataFrame, p: StrategyParams) -> Dict[str, Any]:

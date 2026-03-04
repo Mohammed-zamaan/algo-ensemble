@@ -10,3 +10,11 @@ logzero
 websocket-client
 requests
 beautifulsoup4
+nsepy
+jugaad-trader
+gspread
+google-auth
+openpyxl
+PyYAML
+scipy
+pyarrow

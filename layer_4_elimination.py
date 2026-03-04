@@ -1,5 +1,8 @@
 # layer_4_elimination.py
 # LAYER 4 — Elimination Filter (Pre-Trade Gate)
+# HASH-002 FIX: Removed dead code block after return None, None, None
+# HASH-003 FIX: Comet env variables now loaded via os.getenv()
+# HASH-016 FIX: Removed hardcoded .env path
 
 import os
 import re
@@ -10,11 +13,15 @@ from dotenv import load_dotenv
 from src.trading_ensemble.data.comet_screener import get_top_stocks
 from src.trading_ensemble.data.dual_source import to_yf_ticker
 
-load_dotenv(dotenv_path="/workspaces/algo-ensemble/.env")
+load_dotenv()
 
-# ─────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────
+# COMET CONFIG — HASH-003 FIX
+COMET_API_KEY   = os.getenv("COMET_API_KEY")
+COMET_WORKSPACE = os.getenv("COMET_WORKSPACE", "zamaan")
+COMET_PROJECT   = os.getenv("COMET_PROJECT",   "stock-screener")
+
+if not COMET_API_KEY:
+    raise EnvironmentError("[LAYER 4] COMET_API_KEY not found. Check .env file.")
 
 TOP_N                = 10
 FINAL_CANDIDATES     = 5
@@ -22,11 +29,9 @@ MIN_COMPOSITE_SCORE  = 50.0
 MAX_VOLATILITY_SCORE = 80.0
 MIN_VOLUME_RATIO     = 1.0
 DONCHIAN_PERIOD      = 20
-# ─────────────────────────────────────────────
 
 
 def extract_symbol(name: str) -> str:
-    """Extract clean NSE symbol from any experiment name."""
     match = re.match(r'^([A-Z0-9]+-EQ)', name, re.IGNORECASE)
     if match:
         return match.group(1).upper()
@@ -34,10 +39,6 @@ def extract_symbol(name: str) -> str:
 
 
 def get_all_logged_values(exp) -> dict:
-    """
-    Comet ML stores values in metrics, parameters, and 'others'.
-    Try all three and merge into one flat dict.
-    """
     values = {}
     try:
         for m in exp.get_metrics_summary():
@@ -93,29 +94,22 @@ def fetch_top_n_from_comet(top_n: int) -> pd.DataFrame:
 
 
 def get_donchian_and_volume(symbol_eq: str, period: int = 20):
+    # HASH-002 FIX: single clean return — dead code block removed
     ticker = symbol_eq.replace("-EQ", ".NS")
     try:
-        df = yf.download(ticker, period="3mo", interval="1d", progress=False, auto_adjust=True)
+        df = yf.download(ticker, period="3mo", interval="1d",
+                         progress=False, auto_adjust=True)
         if df.empty or len(df) < period:
             return None, None, None
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        high = df["High"].squeeze().astype(float)
-        close = df["Close"].squeeze().astype(float)
+        high   = df["High"].squeeze().astype(float)
+        close  = df["Close"].squeeze().astype(float)
         volume = df["Volume"].squeeze().astype(float)
         donchian_upper = float(high.rolling(period).max().iloc[-2])
-        ltp = float(close.iloc[-1])
-        avg_vol = float(volume.iloc[-period:-1].mean())
-        cur_vol = float(volume.iloc[-1])
-        vol_ratio = cur_vol / avg_vol if avg_vol > 0 else 0.0
-        return donchian_upper, ltp, vol_ratio
-    except Exception as e:
-        print(f"  [WARN] yfinance error {ticker}: {e}")
-        return None, None, None
-        donchian_upper = float(df["High"].rolling(period).max().iloc[-2])
-        ltp            = float(df["Close"].iloc[-1])
-        avg_vol        = float(df["Volume"].iloc[-period:-1].mean())
-        cur_vol        = float(df["Volume"].iloc[-1])
+        ltp            = float(close.iloc[-1])
+        avg_vol        = float(volume.iloc[-period:-1].mean())
+        cur_vol        = float(volume.iloc[-1])
         vol_ratio      = cur_vol / avg_vol if avg_vol > 0 else 0.0
         return donchian_upper, ltp, vol_ratio
     except Exception as e:
@@ -130,29 +124,22 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
     print("="*65)
     print(f"  Input: {len(df)} stocks")
     print("-"*65)
-
     for _, row in df.iterrows():
         symbol  = row["symbol"]
-        name    = row["experiment_name"]
         c_score = row["COMPOSITE_SCORE"]
         v_score = row["VOLATILITY_SCORE"]
         eliminated = False
         reason = []
-
         if c_score < MIN_COMPOSITE_SCORE:
             eliminated = True
             reason.append(f"COMPOSITE_SCORE {c_score:.1f} < {MIN_COMPOSITE_SCORE}")
-
         if v_score > MAX_VOLATILITY_SCORE:
             eliminated = True
             reason.append(f"VOLATILITY_SCORE {v_score:.1f} > {MAX_VOLATILITY_SCORE}")
-
         donchian_upper, ltp, vol_ratio = get_donchian_and_volume(symbol, DONCHIAN_PERIOD)
-
         if vol_ratio is not None and vol_ratio < MIN_VOLUME_RATIO:
             eliminated = True
             reason.append(f"Volume ratio {vol_ratio:.2f} < {MIN_VOLUME_RATIO}")
-
         breakout = False
         if donchian_upper is not None and ltp is not None:
             breakout = ltp >= donchian_upper
@@ -162,7 +149,6 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
         elif ltp is None:
             eliminated = True
             reason.append("Could not fetch market data")
-
         vr_str = f"{vol_ratio:.2f}" if vol_ratio else "N/A"
         marker = "X" if eliminated else "OK"
         status = "ELIMINATED" if eliminated else "CANDIDATE"
@@ -170,17 +156,14 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
               f"Vola={v_score:.1f}  LTP={ltp}  Don={donchian_upper}  VolR={vr_str}")
         if reason:
             print(f"       Reason: {' | '.join(reason)}")
-
         if not eliminated:
             results.append({**row.to_dict(),
                              "LTP": ltp, "DONCHIAN_UPPER": donchian_upper,
                              "VOLUME_RATIO": vol_ratio, "BREAKOUT": breakout})
-
     candidates_df = pd.DataFrame(results)
     if not candidates_df.empty:
         candidates_df.sort_values("COMPOSITE_SCORE", ascending=False, inplace=True)
         candidates_df = candidates_df.head(FINAL_CANDIDATES)
-
     print("-"*65)
     print(f"  Result: {len(candidates_df)} TRADE CANDIDATE(s) passed all filters")
     print("="*65)
@@ -190,6 +173,11 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
 def save_candidates(df: pd.DataFrame, path: str = "trade_candidates.csv"):
     if df.empty:
         print("\n  [INFO] No candidates today — no trades to place.")
+        pd.DataFrame(columns=[
+            "symbol", "experiment_name", "COMPOSITE_SCORE",
+            "VOLATILITY_SCORE", "LTP", "DONCHIAN_UPPER",
+            "VOLUME_RATIO", "BREAKOUT"
+        ]).to_csv(path, index=False)
         return
     df.to_csv(path, index=False)
     print(f"\n  [SAVED] {len(df)} trade candidates -> {path}")

@@ -1,0 +1,58 @@
+name: Algo Trading Pipeline
+on:
+  schedule:
+    - cron: "15 3 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      trade_mode:
+        description: "Trade mode"
+        required: false
+        default: "INTRADAY"
+        type: choice
+        options: [INTRADAY, SWING, POSITIONAL]
+      paper_trade:
+        description: "Paper trade?"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+
+jobs:
+  trading-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TRADE_MODE:       ${{ github.event.inputs.trade_mode || 'INTRADAY' }}
+      PAPER_TRADE:      ${{ github.event.inputs.paper_trade || 'true' }}
+      TOTAL_CAPITAL:    ${{ secrets.TOTAL_CAPITAL || '500000' }}
+      COMET_API_KEY:    ${{ secrets.COMET_API_KEY }}
+      COMET_WORKSPACE:  ${{ secrets.COMET_WORKSPACE }}
+      COMET_PROJECT:    ${{ secrets.COMET_PROJECT }}
+      ANGEL_API_KEY:    ${{ secrets.ANGEL_API_KEY }}
+      ANGEL_CLIENT_ID:  ${{ secrets.ANGEL_CLIENT_ID }}
+      ANGEL_PASSWORD:   ${{ secrets.ANGEL_PASSWORD }}
+      ANGEL_TOTP_KEY:   ${{ secrets.ANGEL_TOTP_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: pip install -r requirements.txt
+      - name: Pre-market fetch
+        run: python pre_market_fetch.py
+      - name: Layer 4 - Elimination
+        run: python layer_4_elimination.py
+      - name: Layer 5 - Signals
+        run: python layer_5_signals.py
+      - name: Layer 6 - Risk
+        run: python layer_6_risk.py
+      - name: Layer 7 - Execution
+        run: python layer_7_execution.py
+      - name: Save state to repo
+        if: always()
+        run: python save_state_to_repo.py

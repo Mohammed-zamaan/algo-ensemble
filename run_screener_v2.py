@@ -16,7 +16,7 @@ from src.trading_ensemble.data.dual_source import (
     fetch_yf_sentiment, fetch_yf_fundamentals
 )
 
-WEIGHTS = {"technical": 35, "sentiment": 25, "fundamental": 20, "volatility": 20}
+WEIGHTS = {"technical": 40, "sentiment": 25, "fundamental": 15, "volatility": 20}
 
 def technical_score(df_raw):
     p = StrategyParams()

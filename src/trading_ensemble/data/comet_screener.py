@@ -20,5 +20,5 @@ def get_top_stocks(min_score: float = 60) -> pd.DataFrame:
                    for mt in exp.get_metrics_summary() or []}
         score   = metrics.get("composite_score", 0)
         if float(score) >= min_score:
-            records.append({"symbol": symbol + ".NS", "composite_score": score})
+            records.append({"symbol": symbol + ".NS", "composite_score": float(score)})
     return pd.DataFrame(records).sort_values("composite_score", ascending=False)

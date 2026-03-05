@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 USE_YFINANCE = os.getenv("REGIME_USE_YFINANCE", "true").lower() == "true"
-
 TICKERS = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "INDIAVIX": "^INDIAVIX"}
 
 VIX_CAUTION = float(os.getenv("VIX_CAUTION", 20))
@@ -39,6 +38,7 @@ def fetch_index_history(ticker: str, period: str = "1y") -> pd.DataFrame:
 def classify_trend(close: pd.Series) -> dict:
     ma50  = _ma(close, 50)
     ma200 = _ma(close, 200)
+
     last = close.iloc[-1]
     last50 = ma50.iloc[-1]
     last200 = ma200.iloc[-1]

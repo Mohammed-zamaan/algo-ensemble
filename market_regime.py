@@ -12,23 +12,14 @@ load_dotenv()
 
 USE_YFINANCE = os.getenv("REGIME_USE_YFINANCE", "true").lower() == "true"
 
-# yfinance tickers
-TICKERS = {
-    "NIFTY": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
-    "INDIAVIX": "^INDIAVIX",
-}
+TICKERS = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "INDIAVIX": "^INDIAVIX"}
 
-# Thresholds (tune later, conservative defaults)
 VIX_CAUTION = float(os.getenv("VIX_CAUTION", 20))
 VIX_CRISIS  = float(os.getenv("VIX_CRISIS", 30))
-
 SLOPE_DAYS  = int(os.getenv("REGIME_SLOPE_DAYS", 5))
-
 
 def _ma(series: pd.Series, n: int) -> pd.Series:
     return series.rolling(n).mean()
-
 
 def _slope(series: pd.Series, n: int) -> float:
     s = series.dropna().tail(n)
@@ -36,16 +27,14 @@ def _slope(series: pd.Series, n: int) -> float:
         return 0.0
     return float((s.iloc[-1] - s.iloc[0]) / s.iloc[0] * 100)
 
-
 def fetch_index_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     if not USE_YFINANCE:
-        raise RuntimeError("REGIME_USE_YFINANCE=false but no alternate data source configured")
+        raise RuntimeError("REGIME_USE_YFINANCE=false but no alternate source configured")
     import yfinance as yf
     df = yf.Ticker(ticker).history(period=period, interval="1d")
     if df.empty:
         raise ValueError(f"No data for {ticker}")
     return df
-
 
 def classify_trend(close: pd.Series) -> dict:
     ma50  = _ma(close, 50)
@@ -53,40 +42,31 @@ def classify_trend(close: pd.Series) -> dict:
     last = close.iloc[-1]
     last50 = ma50.iloc[-1]
     last200 = ma200.iloc[-1]
-
     slope = _slope(ma50, SLOPE_DAYS)
 
     if pd.isna(last50) or pd.isna(last200):
         return {"trend": "UNKNOWN", "slope": slope}
 
-    # Simple robust trend rule
     if last > last50 and last50 > last200 and slope > 0:
         return {"trend": "BULL", "slope": slope}
     if last < last50 and last50 < last200 and slope < 0:
         return {"trend": "BEAR", "slope": slope}
-
     return {"trend": "SIDEWAYS", "slope": slope}
 
-
 def detect_regime() -> dict:
-    """Detect combined regime using NIFTY + BANKNIFTY + VIX."""
-    nifty = fetch_index_history(TICKERS["NIFTY"])  # 1y
-    bank  = fetch_index_history(TICKERS["BANKNIFTY"])  # 1y
+    nifty = fetch_index_history(TICKERS["NIFTY"])
+    bank  = fetch_index_history(TICKERS["BANKNIFTY"])
     vix   = fetch_index_history(TICKERS["INDIAVIX"], period="6mo")
 
     nifty_trend = classify_trend(nifty["Close"])
     bank_trend  = classify_trend(bank["Close"])
-
     vix_last = float(vix["Close"].iloc[-1])
 
-    # Crisis: volatility dominates
     if vix_last >= VIX_CRISIS:
         regime = "CRISIS"
     else:
-        # Combine NIFTY + BANKNIFTY
         trends = [nifty_trend["trend"], bank_trend["trend"]]
         if trends.count("BEAR") >= 1 and vix_last >= VIX_CAUTION:
-            # bear + elevated vol → treat as crisis-lite
             regime = "BEAR"
         elif trends.count("BULL") == 2 and vix_last < VIX_CAUTION:
             regime = "BULL"
@@ -107,9 +87,7 @@ def detect_regime() -> dict:
         "vix_crisis": VIX_CRISIS,
     }
 
-
 def regime_multiplier(regime: str) -> float:
-    """Returns risk multiplier to apply in Layer 6."""
     regime = regime.upper()
     if regime == "BULL":
         return 1.0
@@ -121,11 +99,10 @@ def regime_multiplier(regime: str) -> float:
         return 0.0
     return 0.5
 
-
 if __name__ == "__main__":
     info = detect_regime()
     mult = regime_multiplier(info["regime"])
-    print("[REGIME] Market Regime Detector")
+    print("\n[REGIME] Market Regime Detector")
     for k, v in info.items():
         print(f"  {k:>20}: {v}")
     print(f"  {'risk_multiplier':>20}: {mult}")

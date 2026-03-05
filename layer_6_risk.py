@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from dotenv import load_dotenv
 from state_manager import load_state, get_drawdown_risk_multiplier, log_equity_snapshot
+from market_regime import detect_regime, regime_multiplier
 from src.trading_ensemble.data.sheets_client import read_master_universe, get_conviction_for_symbol, write_layer_output
 
 load_dotenv()
@@ -114,9 +115,19 @@ def main():
     print("="*65)
     state   = load_state()
     dd_mult = get_drawdown_risk_multiplier(state)
+
+    regime_info = detect_regime()
+    regime = regime_info['regime']
+    regime_mult = regime_multiplier(regime)
+    state['regime'] = regime
+
+    combined_mult = dd_mult * regime_mult
     print(f"  Capital  : INR {state['equity']['current_capital']:,.0f}")
     print(f"  Drawdown : {state['equity']['current_dd_pct']:.2f}%")
     print(f"  DD Mult  : {dd_mult:.2f}x")
+    print(f"  Regime   : {regime} | VIX={regime_info.get('india_vix')} | NIFTY={regime_info.get('nifty_trend')} | BANKNIFTY={regime_info.get('banknifty_trend')}")
+    print(f"  Reg Mult : {regime_mult:.2f}x")
+    print(f"  COMBINED : {combined_mult:.2f}x")
     if dd_mult == 0.0:
         print("  STOP: Trading halted — drawdown > 15%")
         pd.DataFrame().to_csv(ORDERS_FILE, index=False)
@@ -134,11 +145,11 @@ def main():
     except Exception as e:
         print(f"  [WARN] Watchlist error: {e} — defaulting conviction to MANUAL/2")
         universe_df = pd.DataFrame(columns=["symbol","source_type","conviction","conviction_mult"])
-    filtered = apply_risk_filters(signals, dd_mult)
+    filtered = apply_risk_filters(signals, combined_mult)
     if filtered.empty:
         pd.DataFrame().to_csv(ORDERS_FILE, index=False)
         return
-    orders_df = build_orders(filtered, universe_df, dd_mult)
+    orders_df = build_orders(filtered, universe_df, combined_mult)
     if orders_df.empty:
         pd.DataFrame().to_csv(ORDERS_FILE, index=False)
         return

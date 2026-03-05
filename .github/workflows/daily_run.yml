@@ -1,0 +1,169 @@
+name: algo-ensemble Daily Run
+
+on:
+  schedule:
+    - cron: '15 3 * * 1-5'
+    - cron: '45 3 * * 1-5'
+    - cron: '50 3 * * 1-5'
+    - cron: '55 3 * * 1-5'
+    - cron: '0 4 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      step:
+        description: 'Run a specific step (premarket/layer4/layer5/layer6/layer7/all)'
+        required: false
+        default: 'all'
+
+jobs:
+  premarket:
+    name: "08:45 - Premarket Fetch"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '15 3 * * 1-5'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run premarketfetch.py
+        env:
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          COMET_API_KEY:      ${{ secrets.COMET_API_KEY }}
+          PAPER_TRADE:        ${{ secrets.PAPER_TRADE }}
+          TOTAL_CAPITAL:      ${{ secrets.TOTAL_CAPITAL }}
+        run: python premarketfetch.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premarketcache
+          path: premarketcache.json
+          retention-days: 1
+
+  layer4:
+    name: "09:15 - Layer 4 Elimination"
+    runs-on: ubuntu-latest
+    needs: premarket
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '45 3 * * 1-5')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: premarketcache
+      - name: Run layer4elimination.py
+        env:
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          COMET_API_KEY:      ${{ secrets.COMET_API_KEY }}
+          PAPER_TRADE:        ${{ secrets.PAPER_TRADE }}
+          TOTAL_CAPITAL:      ${{ secrets.TOTAL_CAPITAL }}
+        run: python layer4elimination.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tradecandidates
+          path: tradecandidates.csv
+          retention-days: 1
+
+  layer5:
+    name: "09:20 - Layer 5 Signals"
+    runs-on: ubuntu-latest
+    needs: layer4
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '50 3 * * 1-5')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: tradecandidates
+      - name: Run layer5signals.py
+        env:
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          COMET_API_KEY:      ${{ secrets.COMET_API_KEY }}
+          PAPER_TRADE:        ${{ secrets.PAPER_TRADE }}
+          TOTAL_CAPITAL:      ${{ secrets.TOTAL_CAPITAL }}
+        run: python layer5signals.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signals
+          path: signals.csv
+          retention-days: 1
+
+  layer6:
+    name: "09:25 - Layer 6 Risk"
+    runs-on: ubuntu-latest
+    needs: layer5
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '55 3 * * 1-5')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: signals
+      - name: Run layer6risk.py
+        env:
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          COMET_API_KEY:      ${{ secrets.COMET_API_KEY }}
+          PAPER_TRADE:        ${{ secrets.PAPER_TRADE }}
+          TOTAL_CAPITAL:      ${{ secrets.TOTAL_CAPITAL }}
+          VIX_CAUTION:        "20"
+          VIX_CRISIS:         "30"
+        run: python layer_6_risk.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: approvedtrades
+          path: trade_orders.csv
+          retention-days: 1
+
+  layer7:
+    name: "09:30 - Layer 7 Execution"
+    runs-on: ubuntu-latest
+    needs: layer6
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 4 * * 1-5')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: approvedtrades
+      - name: Run layer7execution.py
+        env:
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          COMET_API_KEY:      ${{ secrets.COMET_API_KEY }}
+          PAPER_TRADE:        ${{ secrets.PAPER_TRADE }}
+          TOTAL_CAPITAL:      ${{ secrets.TOTAL_CAPITAL }}
+        run: python layer_7_execution.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orderlog
+          path: orderlog.json
+          retention-days: 7

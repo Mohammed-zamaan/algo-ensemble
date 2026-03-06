@@ -2,11 +2,11 @@ name: algo-ensemble Daily Run
 
 on:
   schedule:
-    - cron: '15 3 * * 1-5'
-    - cron: '45 3 * * 1-5'
-    - cron: '50 3 * * 1-5'
-    - cron: '55 3 * * 1-5'
-    - cron: '0 4 * * 1-5'
+    #     - cron: '15 3 * * 1-5'  # temporarily disabled
+    #     - cron: '45 3 * * 1-5'  # temporarily disabled
+    #     - cron: '50 3 * * 1-5'  # temporarily disabled
+    #     - cron: '55 3 * * 1-5'  # temporarily disabled
+    #     - cron: '0 4 * * 1-5'  # temporarily disabled
   workflow_dispatch:
     inputs:
       step:

@@ -1,0 +1,18 @@
+{
+  "last_updated": "2026-03-06 04:52:55",
+  "trading_date": "2026-03-06",
+  "open_positions": {},
+  "closed_today": [],
+  "equity": {
+    "initial_capital": 20000.0,
+    "current_capital": 20000.0,
+    "peak_capital": 20000.0,
+    "current_dd_pct": 0.0,
+    "total_pnl": 0.0,
+    "total_trades": 0,
+    "winning_trades": 0
+  },
+  "regime": "NORMAL",
+  "paper_trade": true,
+  "session_status": "IDLE"
+}

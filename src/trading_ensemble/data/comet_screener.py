@@ -18,8 +18,11 @@ def get_top_stocks(min_score: float = 60) -> pd.DataFrame:
         symbol  = m.group(1)
         metrics = {mt["name"]: mt["valueCurrent"]
                    for mt in exp.get_metrics_summary() or []}
-        raw_score = metrics.get("composite_score", 0)
-        score = float(raw_score) if raw_score is not None else 0.0
+        raw = metrics.get("composite_score", 0)
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            score = 0.0
         if score >= min_score:
             records.append({"symbol": symbol + ".NS", "composite_score": score})
     return pd.DataFrame(records).sort_values("composite_score", ascending=False)

@@ -26,6 +26,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: HARD DEBUG - print comet_screener
+        run: |
+          echo "COMMIT: $(git rev-parse HEAD)"
+          echo "=== comet_screener.py full ==="
+          cat src/trading_ensemble/data/comet_screener.py
       - name: Debug - verify comet_screener line 22
         run: |
           echo "=== comet_screener.py lines 20-25 ==="

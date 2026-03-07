@@ -34,6 +34,9 @@ def _get_str(name: str, default: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     trade_mode: str
+    enabled_modes: str
+    default_mode: str
+
     paper_trade: bool
     system_trading_enabled: bool
     total_account_capital: float
@@ -48,8 +51,11 @@ class Settings:
     comet_workspace: str
     comet_project_name: str
 
+    watchlist_source: str
     watchlist_gsheet_id: str
     watchlist_gsheet_gid: str
+    watchlist_gsheet_tab: str
+    google_service_account_json: str
 
     watchlist_csv_path: str
     trade_candidates_path: str
@@ -64,6 +70,9 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             trade_mode=_get_str("TRADE_MODE", "INTRADAY"),
+            enabled_modes=_get_str("ENABLED_MODES", "INTRADAY,SWING,POSITIONAL"),
+            default_mode=_get_str("DEFAULT_MODE", "INTRADAY"),
+
             paper_trade=_get_bool("PAPER_TRADE", True),
             system_trading_enabled=_get_bool("SYSTEM_TRADING_ENABLED", False),
             total_account_capital=_get_float("TOTAL_ACCOUNT_CAPITAL", 100000.0),
@@ -78,8 +87,14 @@ class Settings:
             comet_workspace=_get_str("COMET_WORKSPACE", ""),
             comet_project_name=_get_str("COMET_PROJECT_NAME", "stock-screener"),
 
+            watchlist_source=_get_str("WATCHLIST_SOURCE", "csv"),
             watchlist_gsheet_id=_get_str("WATCHLIST_GSHEET_ID", ""),
             watchlist_gsheet_gid=_get_str("WATCHLIST_GSHEET_GID", "0"),
+            watchlist_gsheet_tab=_get_str("WATCHLIST_GSHEET_TAB", "MasterWatchlist"),
+            google_service_account_json=_get_str(
+                "GOOGLE_SERVICE_ACCOUNT_JSON",
+                "credentials/service-account.json",
+            ),
 
             watchlist_csv_path=_get_str("WATCHLIST_CSV_PATH", "watchlist.csv"),
             trade_candidates_path=_get_str("TRADE_CANDIDATES_PATH", "trade_candidates.csv"),
@@ -94,6 +109,14 @@ class Settings:
     def validate_for_runtime(self) -> None:
         if self.total_account_capital <= 0:
             raise ValueError("TOTAL_ACCOUNT_CAPITAL must be > 0")
+
+        if self.watchlist_source.lower() == "google_sheets":
+            if not self.watchlist_gsheet_id:
+                raise ValueError("WATCHLIST_GSHEET_ID is required when WATCHLIST_SOURCE=google_sheets")
+            if not self.watchlist_gsheet_tab:
+                raise ValueError("WATCHLIST_GSHEET_TAB is required when WATCHLIST_SOURCE=google_sheets")
+            if not self.google_service_account_json:
+                raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON is required when WATCHLIST_SOURCE=google_sheets")
 
         if not self.paper_trade:
             required = {

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from trading_ensemble.strategy.modes import resolve_symbol_modes
 from ..engine import PipelineStage
 
 
@@ -232,8 +233,9 @@ class SignalsStage(PipelineStage):
         settings = context["settings"]
         store = context["store"]
         run_id = context["run_id"]
-        mode = settings.trade_mode.upper()
+
         candidates_df = context.get("candidates_df", pd.DataFrame())
+        watchlist = context.get("watchlist", [])
 
         if candidates_df.empty:
             print("No candidates available for signal generation")
@@ -241,11 +243,26 @@ class SignalsStage(PipelineStage):
             pd.DataFrame().to_csv(settings.trade_signals_path, index=False)
             return
 
+        watchlist_by_symbol = {w.symbol.upper(): w for w in watchlist}
+
         signals = []
         for _, row in candidates_df.iterrows():
-            result = generate_signal(row, mode)
-            if result:
-                signals.append(result)
+            symbol = str(row["symbol"]).strip().upper()
+            watchlist_obj = watchlist_by_symbol.get(symbol)
+
+            if watchlist_obj is None:
+                # fallback if candidate wasn't found in watchlist context
+                eligible_modes = [settings.default_mode.upper()]
+            else:
+                eligible_modes = resolve_symbol_modes(watchlist_obj, settings)
+
+            for mode in eligible_modes:
+                result = generate_signal(row, mode)
+                if result:
+                    result["WATCHLIST_CONVICTION"] = getattr(watchlist_obj, "conviction", 2) if watchlist_obj else 2
+                    result["SECTOR"] = getattr(watchlist_obj, "sector", "UNKNOWN") if watchlist_obj else "UNKNOWN"
+                    result["PRIORITY"] = getattr(watchlist_obj, "priority", 0) if watchlist_obj else 0
+                    signals.append(result)
 
         signals_df = pd.DataFrame(signals)
         context["signals_df"] = signals_df
@@ -254,7 +271,7 @@ class SignalsStage(PipelineStage):
             store.insert_signal(
                 run_id=run_id,
                 symbol=str(row["symbol"]),
-                strategy_mode=str(row.get("MODE", mode)),
+                strategy_mode=str(row.get("MODE", settings.default_mode.upper())),
                 entry_price=float(row["ENTRY_PRICE"]),
                 stop_loss=float(row["STOP_LOSS"]),
                 target_price=float(row["TARGET_PRICE"]),
@@ -268,4 +285,4 @@ class SignalsStage(PipelineStage):
             )
 
         signals_df.to_csv(settings.trade_signals_path, index=False)
-        print(f"Saved {len(signals_df)} signals -> {settings.trade_signals_path}")
+        print(f"Saved {len(signals_df)} multi-strategy signals -> {settings.trade_signals_path}")

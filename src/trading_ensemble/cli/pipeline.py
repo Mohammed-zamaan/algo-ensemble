@@ -1,29 +1,26 @@
-from __future__ import annotations
+from trading_ensemble.pipeline.engine import PipelineEngine
 
-from datetime import datetime
+from trading_ensemble.pipeline.stages.premarket import PremarketStage
+from trading_ensemble.pipeline.stages.elimination import EliminationStage
+from trading_ensemble.pipeline.stages.signals import SignalsStage
+from trading_ensemble.pipeline.stages.risk import RiskStage
+from trading_ensemble.pipeline.stages.execution import ExecutionStage
 
-from trading_ensemble.config.settings import Settings
-from trading_ensemble.state.store import StateStore
 
+def main():
 
-def run_pipeline() -> None:
-    settings = Settings.from_env()
-    settings.validate_for_runtime()
+    stages = [
+        PremarketStage(),
+        EliminationStage(),
+        SignalsStage(),
+        RiskStage(),
+        ExecutionStage(),
+    ]
 
-    store = StateStore(settings.state_db_path)
-    store.initialize()
+    engine = PipelineEngine(stages)
 
-    print("=" * 60)
-    print("TRADING ENSEMBLE PIPELINE")
-    print("=" * 60)
-    print(f"Started at: {datetime.utcnow().isoformat()}Z")
-    print(f"Mode: {settings.trade_mode}")
-    print(f"Paper trade: {settings.paper_trade}")
-    print(f"Capital base: {settings.total_account_capital}")
-    print(f"State DB: {settings.state_db_path}")
-    print("Pipeline foundation initialized successfully.")
-    print("=" * 60)
+    engine.run()
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    main()

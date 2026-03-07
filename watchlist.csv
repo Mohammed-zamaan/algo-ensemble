@@ -1,0 +1,4 @@
+symbol,source_type,conviction,active,mode,notes,added_date
+TATASTEEL-EQ,MANUAL,2,TRUE,INTRADAY,Your research,2026-03-05
+SBIN-EQ,ANGEL_ONE,1,TRUE,INTRADAY,Angel recommendation,2026-03-05
+HDFCBANK-EQ,BOTH,3,TRUE,INTRADAY,Both sources agree,2026-03-05

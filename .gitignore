@@ -1,54 +1,20 @@
 # =========================
-# Python
+# Editor / local workspace
 # =========================
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
+.vscode/
 
 # =========================
-# Environment variables
+# Generated runtime artifacts
 # =========================
-.env
-.env.*
-*.env
+trading_candles/
+signals.csv
+trade_candidates.csv
+trade_orders.csv
+trade_signals.csv
+tradecandidates.csv
+backtest_results.csv
 
 # =========================
-# OS files
+# Nested cache dirs
 # =========================
-.DS_Store
-
-# =========================
-# Jupyter
-# =========================
-.ipynb_checkpoints/
-
-# =========================
-# Local data artifacts
-# =========================
-data/
-results/
-
-# =========================
-# Runtime trading state
-# =========================
-state/*.json
-state/*.csv
-state/*.db
-
-# keep folder but not contents
-!state/.gitkeep
-
-# =========================
-# Secrets / credentials
-# =========================
-credentials.json
-service_account.json
-*.pem
-*.key
-
-# =========================
-# Allow package data connectors
-# =========================
-!src/trading_ensemble/data/
-!src/trading_ensemble/data/**
+src/trading_ensemble/data/__pycache__/

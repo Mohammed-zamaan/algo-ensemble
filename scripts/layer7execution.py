@@ -19,13 +19,24 @@ _token_cache    = {}
 
 def get_angel_session():
     from SmartApi import SmartConnect
+
     totp = pyotp.TOTP(ANGEL_TOTP_KEY).now()
-    print(f"  [AUTH] TOTP: {totp}")
-    obj  = SmartConnect(api_key=ANGEL_API_KEY)
-    data = obj.generateSession(ANGEL_CLIENT_ID, ANGEL_PASSWORD, totp)
+
+    obj = SmartConnect(api_key=ANGEL_API_KEY)
+
+    data = obj.generateSession(
+        ANGEL_CLIENT_ID,
+        ANGEL_PASSWORD,
+        totp
+    )
+
     if not data["status"]:
-        raise ConnectionError(f"Login failed: {data['message']}")
-    print(f"  [AUTH] Logged in as {ANGEL_CLIENT_ID}")
+        raise ConnectionError(
+            f"Angel login failed: {data.get('message')}"
+        )
+
+    print(f"[AUTH] Angel session established")
+
     return obj
 
 def get_symbol_token(obj, symbol):

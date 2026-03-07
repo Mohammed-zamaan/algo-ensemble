@@ -1,12 +1,252 @@
+from __future__ import annotations
+
+from datetime import datetime, time as dt_time
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
 from ..engine import PipelineStage
 
 
-class SignalsStage(PipelineStage):
+MODE_CONFIG = {
+    "INTRADAY": {
+        "donchian_period": 20,
+        "atr_period": 14,
+        "atr_sl_mult": 1.5,
+        "atr_target_mult": 2.5,
+        "min_rr": 1.5,
+        "volume_mult": 2.0,
+        "atr_min": 5.0,
+        "yf_interval": "15m",
+        "yf_period": "5d",
+        "product_type": "MIS",
+        "entry_after": dt_time(9, 30),
+        "exit_before": dt_time(15, 15),
+    },
+    "SWING": {
+        "donchian_period": 20,
+        "atr_period": 14,
+        "atr_sl_mult": 2.0,
+        "atr_target_mult": 4.0,
+        "min_rr": 2.0,
+        "volume_mult": 1.5,
+        "atr_min": 5.0,
+        "yf_interval": "1d",
+        "yf_period": "3mo",
+        "product_type": "CNC",
+        "entry_after": dt_time(9, 30),
+        "exit_before": dt_time(15, 15),
+    },
+    "POSITIONAL": {
+        "donchian_period": 55,
+        "atr_period": 21,
+        "atr_sl_mult": 3.0,
+        "atr_target_mult": 8.0,
+        "min_rr": 2.5,
+        "volume_mult": 1.3,
+        "atr_min": 5.0,
+        "yf_interval": "1d",
+        "yf_period": "6mo",
+        "product_type": "CNC",
+        "entry_after": dt_time(9, 30),
+        "exit_before": dt_time(15, 15),
+    },
+}
 
+
+def to_yf_ticker(symbol: str) -> str:
+    return symbol.replace("-EQ", "").strip() + ".NS"
+
+
+def fetch_candles(symbol: str, cfg: dict) -> pd.DataFrame | None:
+    ticker = to_yf_ticker(symbol)
+    try:
+        df = yf.download(
+            ticker,
+            period=cfg["yf_period"],
+            interval=cfg["yf_interval"],
+            progress=False,
+            auto_adjust=True,
+        )
+        if df is None or df.empty:
+            return None
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        df.columns = [c.strip().lower() for c in df.columns]
+        df = df[["open", "high", "low", "close", "volume"]].copy()
+        df.dropna(inplace=True)
+
+        if len(df) < cfg["donchian_period"] + 5:
+            return None
+
+        return df
+    except Exception:
+        return None
+
+
+def compute_atr(df: pd.DataFrame, period: int) -> float:
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    prev_close = close.shift(1)
+
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr = tr.ewm(span=period, adjust=False).mean()
+    return float(atr.iloc[-1])
+
+
+def compute_donchian_upper(df: pd.DataFrame, period: int) -> float:
+    return float(df["high"].rolling(period).max().iloc[-2])
+
+
+def compute_avg_volume(df: pd.DataFrame, period: int) -> float:
+    return float(df["volume"].iloc[-period - 1 : -1].mean())
+
+
+def compute_adx(df: pd.DataFrame, period: int = 14) -> float:
+    try:
+        high = df["high"].astype(float)
+        low = df["low"].astype(float)
+        close = df["close"].astype(float)
+
+        plus_dm = high.diff()
+        minus_dm = -low.diff()
+        plus_dm[plus_dm < 0] = 0
+        minus_dm[minus_dm < 0] = 0
+
+        tr = pd.concat(
+            [
+                high - low,
+                (high - close.shift()).abs(),
+                (low - close.shift()).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+
+        atr14 = tr.ewm(span=period, adjust=False).mean()
+        plus_di = 100 * plus_dm.ewm(span=period, adjust=False).mean() / atr14
+        minus_di = 100 * minus_dm.ewm(span=period, adjust=False).mean() / atr14
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        adx = dx.ewm(span=period, adjust=False).mean()
+        return float(adx.iloc[-1])
+    except Exception:
+        return 0.0
+
+
+def get_signal_strength(price_above: bool, vol_ratio: float, atr_ratio: float, adx: float) -> str:
+    if not price_above:
+        return "REJECTED"
+
+    score = 0
+
+    if vol_ratio >= 2.5:
+        score += 2
+    elif vol_ratio >= 2.0:
+        score += 1
+
+    if atr_ratio >= 1.5:
+        score += 2
+    elif atr_ratio >= 1.0:
+        score += 1
+
+    if adx >= 30:
+        score += 2
+    elif adx >= 20:
+        score += 1
+
+    if score >= 5:
+        return "STRONG"
+    if score >= 3:
+        return "CONFIRMED"
+    return "WEAK"
+
+
+def generate_signal(row: pd.Series, mode: str) -> dict | None:
+    cfg = MODE_CONFIG[mode]
+    symbol = row["symbol"]
+
+    df = fetch_candles(symbol, cfg)
+    if df is None:
+        return None
+
+    atr = compute_atr(df, cfg["atr_period"])
+    donchian_upper = compute_donchian_upper(df, cfg["donchian_period"])
+    avg_vol = compute_avg_volume(df, cfg["donchian_period"])
+    adx = compute_adx(df, 14)
+
+    entry_price = float(df["close"].iloc[-1])
+    current_vol = float(df["volume"].iloc[-1])
+    vol_ratio = current_vol / avg_vol if avg_vol > 0 else 0.0
+    atr_ratio = atr / entry_price * 100
+
+    price_above = entry_price >= donchian_upper
+    vol_ok = vol_ratio >= cfg["volume_mult"]
+    atr_ok = atr >= cfg["atr_min"]
+
+    strength = get_signal_strength(price_above, vol_ratio, atr_ratio, adx)
+    if strength in ("REJECTED", "WEAK"):
+        return None
+
+    stop_loss = round(entry_price - cfg["atr_sl_mult"] * atr, 2)
+    target_price = round(entry_price + cfg["atr_target_mult"] * atr, 2)
+    rr_ratio = round((target_price - entry_price) / (entry_price - stop_loss), 2)
+
+    if rr_ratio < cfg["min_rr"]:
+        return None
+
+    return {
+        "symbol": symbol,
+        "MODE": mode,
+        "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0)),
+        "ENTRY_PRICE": entry_price,
+        "STOP_LOSS": stop_loss,
+        "TARGET_PRICE": target_price,
+        "RR_RATIO": rr_ratio,
+        "ATR": round(atr, 4),
+        "ATR_RATIO_PCT": round(atr_ratio, 4),
+        "ADX": round(adx, 2),
+        "VOLUME_RATIO": round(vol_ratio, 2),
+        "DONCHIAN_UPPER": round(donchian_upper, 2),
+        "BREAKOUT_15M": price_above and vol_ok and atr_ok,
+        "SIGNAL_STRENGTH": strength,
+        "PRODUCT_TYPE": cfg["product_type"],
+        "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+class SignalsStage(PipelineStage):
     name = "signals"
 
     def run(self, context):
+        settings = context["settings"]
+        mode = settings.trade_mode.upper()
+        candidates_df = context.get("candidates_df", pd.DataFrame())
 
-        print("Generating signals")
+        if candidates_df.empty:
+            print("No candidates available for signal generation")
+            context["signals_df"] = pd.DataFrame()
+            pd.DataFrame().to_csv(settings.trade_signals_path, index=False)
+            return
 
-        context["signals"] = []
+        signals = []
+        for _, row in candidates_df.iterrows():
+            result = generate_signal(row, mode)
+            if result:
+                signals.append(result)
+
+        signals_df = pd.DataFrame(signals)
+        context["signals_df"] = signals_df
+
+        signals_df.to_csv(settings.trade_signals_path, index=False)
+        print(f"Saved {len(signals_df)} signals -> {settings.trade_signals_path}")

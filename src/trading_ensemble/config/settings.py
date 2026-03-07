@@ -51,6 +51,13 @@ class Settings:
     watchlist_gsheet_id: str
     watchlist_gsheet_gid: str
 
+    watchlist_csv_path: str
+    trade_candidates_path: str
+    trade_signals_path: str
+    trade_orders_path: str
+    execution_log_path: str
+    paper_trades_path: str
+
     regime_override: str
 
     @classmethod
@@ -73,6 +80,13 @@ class Settings:
 
             watchlist_gsheet_id=_get_str("WATCHLIST_GSHEET_ID", ""),
             watchlist_gsheet_gid=_get_str("WATCHLIST_GSHEET_GID", "0"),
+
+            watchlist_csv_path=_get_str("WATCHLIST_CSV_PATH", "watchlist.csv"),
+            trade_candidates_path=_get_str("TRADE_CANDIDATES_PATH", "trade_candidates.csv"),
+            trade_signals_path=_get_str("TRADE_SIGNALS_PATH", "trade_signals.csv"),
+            trade_orders_path=_get_str("TRADE_ORDERS_PATH", "trade_orders.csv"),
+            execution_log_path=_get_str("EXECUTION_LOG_PATH", "state/execution_log.csv"),
+            paper_trades_path=_get_str("PAPER_TRADES_PATH", "state/paper_trades.csv"),
 
             regime_override=_get_str("REGIME_OVERRIDE", ""),
         )

@@ -230,6 +230,8 @@ class SignalsStage(PipelineStage):
 
     def run(self, context):
         settings = context["settings"]
+        store = context["store"]
+        run_id = context["run_id"]
         mode = settings.trade_mode.upper()
         candidates_df = context.get("candidates_df", pd.DataFrame())
 
@@ -247,6 +249,23 @@ class SignalsStage(PipelineStage):
 
         signals_df = pd.DataFrame(signals)
         context["signals_df"] = signals_df
+
+        for _, row in signals_df.iterrows():
+            store.insert_signal(
+                run_id=run_id,
+                symbol=str(row["symbol"]),
+                strategy_mode=str(row.get("MODE", mode)),
+                entry_price=float(row["ENTRY_PRICE"]),
+                stop_loss=float(row["STOP_LOSS"]),
+                target_price=float(row["TARGET_PRICE"]),
+                rr_ratio=float(row["RR_RATIO"]),
+                atr=float(row.get("ATR", 0.0)) if pd.notna(row.get("ATR")) else None,
+                adx=float(row.get("ADX", 0.0)) if pd.notna(row.get("ADX")) else None,
+                volume_ratio=float(row.get("VOLUME_RATIO", 0.0)) if pd.notna(row.get("VOLUME_RATIO")) else None,
+                signal_strength=str(row.get("SIGNAL_STRENGTH", "")),
+                product_type=str(row.get("PRODUCT_TYPE", "")),
+                signal_time=str(row.get("SIGNAL_TIME", "")),
+            )
 
         signals_df.to_csv(settings.trade_signals_path, index=False)
         print(f"Saved {len(signals_df)} signals -> {settings.trade_signals_path}")

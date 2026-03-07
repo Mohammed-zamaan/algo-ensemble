@@ -56,6 +56,39 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS candidates (
+    candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    composite_score REAL,
+    volatility_score REAL,
+    ltp REAL,
+    donchian_upper REAL,
+    volume_ratio REAL,
+    breakout INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS signals (
+    signal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    strategy_mode TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    target_price REAL NOT NULL,
+    rr_ratio REAL NOT NULL,
+    atr REAL,
+    adx REAL,
+    volume_ratio REAL,
+    signal_strength TEXT,
+    product_type TEXT,
+    signal_time TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES runs(run_id)
+);
+
 CREATE TABLE IF NOT EXISTS equity_snapshots (
     snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
     captured_at TEXT NOT NULL,
@@ -192,3 +225,78 @@ class StateStore:
                     """,
                     (symbol, quantity, average_price, product_type, strategy_mode, status),
                 )
+
+    def insert_candidate(
+        self,
+        run_id: int,
+        symbol: str,
+        composite_score: float | None,
+        volatility_score: float | None,
+        ltp: float | None,
+        donchian_upper: float | None,
+        volume_ratio: float | None,
+        breakout: bool | None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO candidates (
+                    run_id, symbol, composite_score, volatility_score, ltp,
+                    donchian_upper, volume_ratio, breakout, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (
+                    run_id,
+                    symbol,
+                    composite_score,
+                    volatility_score,
+                    ltp,
+                    donchian_upper,
+                    volume_ratio,
+                    int(bool(breakout)) if breakout is not None else None,
+                ),
+            )
+
+    def insert_signal(
+        self,
+        run_id: int,
+        symbol: str,
+        strategy_mode: str,
+        entry_price: float,
+        stop_loss: float,
+        target_price: float,
+        rr_ratio: float,
+        atr: float | None,
+        adx: float | None,
+        volume_ratio: float | None,
+        signal_strength: str | None,
+        product_type: str | None,
+        signal_time: str | None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO signals (
+                    run_id, symbol, strategy_mode, entry_price, stop_loss,
+                    target_price, rr_ratio, atr, adx, volume_ratio,
+                    signal_strength, product_type, signal_time, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                """,
+                (
+                    run_id,
+                    symbol,
+                    strategy_mode,
+                    entry_price,
+                    stop_loss,
+                    target_price,
+                    rr_ratio,
+                    atr,
+                    adx,
+                    volume_ratio,
+                    signal_strength,
+                    product_type,
+                    signal_time,
+                ),
+            )

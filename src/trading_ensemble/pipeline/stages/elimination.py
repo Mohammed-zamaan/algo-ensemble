@@ -185,5 +185,20 @@ class EliminationStage(PipelineStage):
         candidates_df = apply_elimination_filter(top_df)
         context["candidates_df"] = candidates_df
 
+        store = context["store"]
+        run_id = context["run_id"]
+
+        for _, row in candidates_df.iterrows():
+            store.insert_candidate(
+                run_id=run_id,
+                symbol=str(row["symbol"]),
+                composite_score=float(row.get("COMPOSITE_SCORE", 0.0)),
+                volatility_score=float(row.get("VOLATILITY_SCORE", 0.0)),
+                ltp=float(row.get("LTP", 0.0)) if pd.notna(row.get("LTP")) else None,
+                donchian_upper=float(row.get("DONCHIAN_UPPER", 0.0)) if pd.notna(row.get("DONCHIAN_UPPER")) else None,
+                volume_ratio=float(row.get("VOLUME_RATIO", 0.0)) if pd.notna(row.get("VOLUME_RATIO")) else None,
+                breakout=bool(row.get("BREAKOUT", False)),
+            )
+
         candidates_df.to_csv(settings.trade_candidates_path, index=False)
         print(f"Saved {len(candidates_df)} candidates -> {settings.trade_candidates_path}")

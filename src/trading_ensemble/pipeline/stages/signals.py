@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from trading_ensemble.data.sheets_output import maybe_write_output
 from trading_ensemble.strategy.modes import resolve_symbol_modes
 from ..engine import PipelineStage
 
@@ -173,13 +174,13 @@ def get_signal_strength(price_above: bool, vol_ratio: float, atr_ratio: float, a
     return "WEAK"
 
 
-def generate_signal(row: pd.Series, mode: str) -> dict | None:
+def generate_signal(row: pd.Series, mode: str) -> tuple[dict | None, str]:
     cfg = MODE_CONFIG[mode]
     symbol = row["symbol"]
 
     df = fetch_candles(symbol, cfg)
     if df is None:
-        return None
+        return None, "no_data"
 
     atr = compute_atr(df, cfg["atr_period"])
     donchian_upper = compute_donchian_upper(df, cfg["donchian_period"])
@@ -196,34 +197,45 @@ def generate_signal(row: pd.Series, mode: str) -> dict | None:
     atr_ok = atr >= cfg["atr_min"]
 
     strength = get_signal_strength(price_above, vol_ratio, atr_ratio, adx)
-    if strength in ("REJECTED", "WEAK"):
-        return None
+    if strength == "REJECTED":
+        return None, "breakout"
+    if strength == "WEAK":
+        return None, "strength"
+
+    if not vol_ok:
+        return None, "volume"
+
+    if not atr_ok:
+        return None, "atr"
 
     stop_loss = round(entry_price - cfg["atr_sl_mult"] * atr, 2)
     target_price = round(entry_price + cfg["atr_target_mult"] * atr, 2)
     rr_ratio = round((target_price - entry_price) / (entry_price - stop_loss), 2)
 
     if rr_ratio < cfg["min_rr"]:
-        return None
+        return None, "rr"
 
-    return {
-        "symbol": symbol,
-        "MODE": mode,
-        "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0)),
-        "ENTRY_PRICE": entry_price,
-        "STOP_LOSS": stop_loss,
-        "TARGET_PRICE": target_price,
-        "RR_RATIO": rr_ratio,
-        "ATR": round(atr, 4),
-        "ATR_RATIO_PCT": round(atr_ratio, 4),
-        "ADX": round(adx, 2),
-        "VOLUME_RATIO": round(vol_ratio, 2),
-        "DONCHIAN_UPPER": round(donchian_upper, 2),
-        "BREAKOUT_15M": price_above and vol_ok and atr_ok,
-        "SIGNAL_STRENGTH": strength,
-        "PRODUCT_TYPE": cfg["product_type"],
-        "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+    return (
+        {
+            "symbol": symbol,
+            "MODE": mode,
+            "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0)),
+            "ENTRY_PRICE": entry_price,
+            "STOP_LOSS": stop_loss,
+            "TARGET_PRICE": target_price,
+            "RR_RATIO": rr_ratio,
+            "ATR": round(atr, 4),
+            "ATR_RATIO_PCT": round(atr_ratio, 4),
+            "ADX": round(adx, 2),
+            "VOLUME_RATIO": round(vol_ratio, 2),
+            "DONCHIAN_UPPER": round(donchian_upper, 2),
+            "BREAKOUT_15M": price_above and vol_ok and atr_ok,
+            "SIGNAL_STRENGTH": strength,
+            "PRODUCT_TYPE": cfg["product_type"],
+            "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+        "ok",
+    )
 
 
 class SignalsStage(PipelineStage):
@@ -233,6 +245,7 @@ class SignalsStage(PipelineStage):
         settings = context["settings"]
         store = context["store"]
         run_id = context["run_id"]
+        control_panel = context.get("control_panel")
 
         candidates_df = context.get("candidates_df", pd.DataFrame())
         watchlist = context.get("watchlist", [])
@@ -240,24 +253,37 @@ class SignalsStage(PipelineStage):
         if candidates_df.empty:
             print("No candidates available for signal generation")
             context["signals_df"] = pd.DataFrame()
-            pd.DataFrame().to_csv(settings.trade_signals_path, index=False)
+            empty_df = pd.DataFrame()
+            empty_df.to_csv(settings.trade_signals_path, index=False)
+            maybe_write_output(settings, control_panel, "ConfirmedSignals", empty_df)
             return
 
         watchlist_by_symbol = {w.symbol.upper(): w for w in watchlist}
 
         signals = []
+        diag = {
+            "no_data": 0,
+            "breakout": 0,
+            "strength": 0,
+            "volume": 0,
+            "atr": 0,
+            "rr": 0,
+            "ok": 0,
+        }
+
         for _, row in candidates_df.iterrows():
             symbol = str(row["symbol"]).strip().upper()
             watchlist_obj = watchlist_by_symbol.get(symbol)
 
             if watchlist_obj is None:
-                # fallback if candidate wasn't found in watchlist context
                 eligible_modes = [settings.default_mode.upper()]
             else:
                 eligible_modes = resolve_symbol_modes(watchlist_obj, settings)
 
             for mode in eligible_modes:
-                result = generate_signal(row, mode)
+                result, reason = generate_signal(row, mode)
+                diag[reason] = diag.get(reason, 0) + 1
+
                 if result:
                     result["WATCHLIST_CONVICTION"] = getattr(watchlist_obj, "conviction", 2) if watchlist_obj else 2
                     result["SECTOR"] = getattr(watchlist_obj, "sector", "UNKNOWN") if watchlist_obj else "UNKNOWN"
@@ -266,6 +292,15 @@ class SignalsStage(PipelineStage):
 
         signals_df = pd.DataFrame(signals)
         context["signals_df"] = signals_df
+
+        print("Signals diagnostics:")
+        print(f"  rejected_no_data   = {diag['no_data']}")
+        print(f"  rejected_breakout  = {diag['breakout']}")
+        print(f"  rejected_strength  = {diag['strength']}")
+        print(f"  rejected_volume    = {diag['volume']}")
+        print(f"  rejected_atr       = {diag['atr']}")
+        print(f"  rejected_rr        = {diag['rr']}")
+        print(f"  generated_signals  = {diag['ok']}")
 
         for _, row in signals_df.iterrows():
             store.insert_signal(
@@ -285,4 +320,5 @@ class SignalsStage(PipelineStage):
             )
 
         signals_df.to_csv(settings.trade_signals_path, index=False)
+        maybe_write_output(settings, control_panel, "ConfirmedSignals", signals_df)
         print(f"Saved {len(signals_df)} multi-strategy signals -> {settings.trade_signals_path}")

@@ -19,10 +19,17 @@ def build_context() -> dict:
         print(f"Failed to load ControlPanel for trigger monitor: {exc}")
         control_panel = None
 
+    run_id = store.create_run(
+        mode="TRIGGER_MONITOR",
+        paper_trade=settings.paper_trade,
+        status="STARTED",
+    )
+
     return {
         "settings": settings,
         "store": store,
         "control_panel": control_panel,
+        "run_id": run_id,
     }
 
 
@@ -42,7 +49,9 @@ def main():
     args = parser.parse_args()
 
     if args.once:
-        run_trigger_cycle(build_context())
+        context = build_context()
+        run_trigger_cycle(context)
+        context["store"].finish_run(context["run_id"], status="COMPLETED", notes="Trigger monitor single cycle")
         return
 
     run_trigger_loop(

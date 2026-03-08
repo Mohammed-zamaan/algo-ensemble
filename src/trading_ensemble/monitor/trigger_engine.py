@@ -52,7 +52,6 @@ def load_setup_signals(store) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # backfill from CSV-style fields if they exist in future migrations
     for col in [
         "DONCHIAN_UPPER",
         "BREAKOUT_READY",
@@ -95,7 +94,6 @@ def fetch_latest_market_snapshot(symbol: str, mode: str) -> dict[str, Any] | Non
 
         latest = df.iloc[-1]
 
-        # rolling levels from live snapshot series
         donchian_period = 20 if str(mode).upper() in {"INTRADAY", "SWING"} else 55
         if len(df) >= donchian_period:
             live_donchian_upper = float(df["high"].rolling(donchian_period).max().iloc[-2])
@@ -135,14 +133,12 @@ def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None
     avg_volume = float(snapshot["avg_volume"]) if snapshot["avg_volume"] > 0 else 0.0
     live_volume_ratio = latest_volume / avg_volume if avg_volume > 0 else 0.0
 
-    # use live-computed Donchian
     donchian_upper = float(snapshot["live_donchian_upper"])
     breakout_ready = latest_close >= donchian_upper
 
     volume_threshold = 2.0 if mode == "INTRADAY" else 1.5 if mode == "SWING" else 1.3
     volume_ready = live_volume_ratio >= volume_threshold
-
-    atr_ready = True  # Phase 20B keeps ATR permissive; tighten in 20C if needed
+    atr_ready = True
 
     promotion_candidate = breakout_ready and volume_ready and atr_ready
 
@@ -172,6 +168,10 @@ def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None
         "RR_RATIO": row.get("RR_RATIO"),
         "PRODUCT_TYPE": row.get("PRODUCT_TYPE"),
         "SIGNAL_TIME": row.get("SIGNAL_TIME"),
+        "WATCHLIST_CONVICTION": row.get("WATCHLIST_CONVICTION", 2),
+        "SECTOR": row.get("SECTOR", "UNKNOWN"),
+        "PRIORITY": row.get("PRIORITY", 0),
+        "COMPOSITE_SCORE": row.get("COMPOSITE_SCORE", 0),
     }
 
 
@@ -186,3 +186,95 @@ def dedupe_setup_rows(df: pd.DataFrame) -> pd.DataFrame:
 
     work = work.drop_duplicates(subset=["symbol", "MODE"], keep="first")
     return work.reset_index(drop=True)
+
+
+def has_open_position(store, symbol: str) -> bool:
+    with store.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM positions
+            WHERE symbol = ? AND status = 'OPEN'
+            LIMIT 1
+            """,
+            (symbol,),
+        ).fetchone()
+    return row is not None
+
+
+def has_existing_order_today(store, symbol: str) -> bool:
+    with store.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM orders
+            WHERE symbol = ?
+              AND date(created_at) = date('now')
+            LIMIT 1
+            """,
+            (symbol,),
+        ).fetchone()
+    return row is not None
+
+
+def filter_promotion_candidates(store, promoted_df: pd.DataFrame) -> pd.DataFrame:
+    if promoted_df.empty:
+        return promoted_df
+
+    rows = []
+    for _, row in promoted_df.iterrows():
+        symbol = str(row["symbol"])
+
+        if has_open_position(store, symbol):
+            continue
+        if has_existing_order_today(store, symbol):
+            continue
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(columns=promoted_df.columns)
+
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
+def convert_promotions_to_signals(promoted_df: pd.DataFrame) -> pd.DataFrame:
+    if promoted_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    promoted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for _, row in promoted_df.iterrows():
+        rows.append(
+            {
+                "symbol": row["symbol"],
+                "MODE": row["MODE"],
+                "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0) or 0),
+                "ENTRY_PRICE": float(row["latest_close"]),
+                "STOP_LOSS": float(row["STOP_LOSS"]),
+                "TARGET_PRICE": float(row["TARGET_PRICE"]),
+                "RR_RATIO": float(row["RR_RATIO"]),
+                "ATR": None,
+                "ATR_RATIO_PCT": None,
+                "ADX": None,
+                "VOLUME_RATIO": float(row.get("live_volume_ratio", 0) or 0),
+                "DONCHIAN_UPPER": float(row.get("live_donchian_upper", 0) or 0),
+                "BREAKOUT_15M": True,
+                "BREAKOUT_READY": True,
+                "VOLUME_READY": True,
+                "ATR_READY": True,
+                "PRODUCT_TYPE": row.get("PRODUCT_TYPE", "MIS"),
+                "SIGNAL_TIME": promoted_at,
+                "SIGNAL_STRENGTH": "PROMOTED",
+                "SIGNAL_STATUS": "CONFIRMED",
+                "SETUP_REASON": "PROMOTED_BY_MONITOR",
+                "WATCHLIST_CONVICTION": float(row.get("WATCHLIST_CONVICTION", 2) or 2),
+                "SECTOR": row.get("SECTOR", "UNKNOWN"),
+                "PRIORITY": int(row.get("PRIORITY", 0) or 0),
+                "PROMOTED_AT": promoted_at,
+                "PROMOTION_REASON": row.get("promotion_reason", "PROMOTED"),
+            }
+        )
+
+    return pd.DataFrame(rows)

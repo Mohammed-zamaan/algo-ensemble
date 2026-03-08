@@ -4,6 +4,21 @@
 .vscode/
 
 # =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# =========================
 # Generated runtime artifacts
 # =========================
 trading_candles/
@@ -13,8 +28,28 @@ trade_orders.csv
 trade_signals.csv
 tradecandidates.csv
 backtest_results.csv
+results/
 
 # =========================
-# Nested cache dirs
+# Runtime state
 # =========================
-src/trading_ensemble/data/__pycache__/
+state/*.csv
+state/*.json
+state/*.db
+
+# keep folder scaffold only
+!state/.gitkeep
+
+# =========================
+# OS / notebook noise
+# =========================
+.DS_Store
+.ipynb_checkpoints/
+
+# =========================
+# Google / credentials
+# =========================
+credentials/
+credentials.json
+service_account.json
+token.json

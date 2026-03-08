@@ -1,5 +1,9 @@
 from trading_ensemble.config.settings import Settings
 from trading_ensemble.pipeline.engine import PipelineEngine
+from trading_ensemble.pipeline.summary import build_run_summary
+
+from trading_ensemble.data.sheets_output import maybe_write_output
+
 from trading_ensemble.pipeline.stages.premarket import PremarketStage
 from trading_ensemble.pipeline.stages.elimination import EliminationStage
 from trading_ensemble.pipeline.stages.signals import SignalsStage
@@ -36,6 +40,10 @@ def main():
     ]
 
     engine = PipelineEngine(stages)
+from trading_ensemble.pipeline.summary import build_run_summary
+
+from trading_ensemble.data.sheets_output import maybe_write_output
+
 
     try:
         engine.run(context)

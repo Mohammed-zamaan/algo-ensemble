@@ -204,6 +204,7 @@ class EliminationStage(PipelineStage):
         )
 
         print(f"Comet ranked symbols fetched: {len(top_df)}")
+        context["comet_ranked_count"] = len(top_df)
 
         if top_df.empty:
             print("No ranked Comet candidates found")

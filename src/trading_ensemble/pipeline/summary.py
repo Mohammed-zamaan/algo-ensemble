@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+from datetime import datetime
+import pandas as pd
+
+
+def build_run_summary(context) -> pd.DataFrame:
+    control_panel = context.get("control_panel")
+    candidates_df = context.get("candidates_df", pd.DataFrame())
+    signals_df = context.get("signals_df", pd.DataFrame())
+    orders_df = context.get("orders_df", pd.DataFrame())
+    execution_df = context.get("execution_results_df", pd.DataFrame())
+    watchlist = context.get("watchlist", [])
+    comet_ranked_count = context.get("comet_ranked_count", 0)
+
+    confirmed_count = 0
+    setup_count = 0
+
+    if not signals_df.empty and "SIGNAL_STATUS" in signals_df.columns:
+        confirmed_count = int((signals_df["SIGNAL_STATUS"] == "CONFIRMED").sum())
+        setup_count = int((signals_df["SIGNAL_STATUS"] == "SETUP").sum())
+
+    rows = [
+        {"metric": "run_time", "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+        {"metric": "watchlist_symbols", "value": len(watchlist)},
+        {"metric": "comet_ranked_symbols", "value": comet_ranked_count},
+        {"metric": "shortlisted_candidates", "value": len(candidates_df)},
+        {"metric": "setup_signals", "value": setup_count},
+        {"metric": "confirmed_signals", "value": confirmed_count},
+        {"metric": "approved_orders", "value": len(orders_df)},
+        {"metric": "executed_orders", "value": len(execution_df)},
+        {"metric": "system_trading_enabled", "value": getattr(control_panel, "system_trading_enabled", True) if control_panel else True},
+        {"metric": "pause_new_entries", "value": getattr(control_panel, "pause_new_entries", False) if control_panel else False},
+        {"metric": "force_exit_all", "value": getattr(control_panel, "force_exit_all", False) if control_panel else False},
+        {"metric": "paper_trade", "value": getattr(control_panel, "paper_trade", True) if control_panel else True},
+    ]
+
+    return pd.DataFrame(rows)

@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 from comet_ml import API
 
+from trading_ensemble.data.sheets_output import maybe_write_output
 from ..engine import PipelineStage
 
 
@@ -114,6 +115,11 @@ def get_donchian_and_volume(symbol_eq: str, period: int = 20):
 
 def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
     results = []
+    rejected_score = 0
+    rejected_volatility = 0
+    rejected_data = 0
+    breakout_not_ready = 0
+    volume_not_ready = 0
 
     for _, row in df.iterrows():
         symbol = row["symbol"]
@@ -123,22 +129,30 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
         eliminated = False
 
         if composite_score < MIN_COMPOSITE_SCORE:
+            rejected_score += 1
             eliminated = True
+
         if volatility_score > MAX_VOLATILITY_SCORE:
+            rejected_volatility += 1
             eliminated = True
 
         donchian_upper, ltp, vol_ratio = get_donchian_and_volume(symbol, DONCHIAN_PERIOD)
 
-        if vol_ratio is None or vol_ratio < MIN_VOLUME_RATIO:
+        if donchian_upper is None or ltp is None:
+            rejected_data += 1
             eliminated = True
-
-        breakout = False
-        if donchian_upper is not None and ltp is not None:
-            breakout = ltp >= donchian_upper
-            if not breakout:
-                eliminated = True
+            breakout = False
+            breakout_ready = False
+            volume_ready = False
         else:
-            eliminated = True
+            breakout = ltp >= donchian_upper
+            breakout_ready = breakout
+            volume_ready = (vol_ratio is not None and vol_ratio >= MIN_VOLUME_RATIO)
+
+            if not breakout_ready:
+                breakout_not_ready += 1
+            if not volume_ready:
+                volume_not_ready += 1
 
         if not eliminated:
             results.append(
@@ -148,6 +162,8 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
                     "DONCHIAN_UPPER": donchian_upper,
                     "VOLUME_RATIO": vol_ratio,
                     "BREAKOUT": breakout,
+                    "BREAKOUT_READY": breakout_ready,
+                    "VOLUME_READY": volume_ready,
                 }
             )
 
@@ -155,6 +171,14 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
     if not candidates_df.empty:
         candidates_df.sort_values("COMPOSITE_SCORE", ascending=False, inplace=True)
         candidates_df = candidates_df.head(FINAL_CANDIDATES)
+
+    print("Elimination diagnostics:")
+    print(f"  rejected_score      = {rejected_score}")
+    print(f"  rejected_volatility = {rejected_volatility}")
+    print(f"  rejected_data       = {rejected_data}")
+    print(f"  breakout_not_ready  = {breakout_not_ready}")
+    print(f"  volume_not_ready    = {volume_not_ready}")
+    print(f"  final_candidates    = {len(candidates_df)}")
 
     return candidates_df
 
@@ -164,10 +188,12 @@ class EliminationStage(PipelineStage):
 
     def run(self, context):
         settings = context["settings"]
+        control_panel = context.get("control_panel")
 
         if not settings.comet_api_key:
             print("Comet API key missing - elimination stage skipped")
             context["candidates_df"] = pd.DataFrame()
+            maybe_write_output(settings, control_panel, "SelectedCandidates", pd.DataFrame())
             return
 
         top_df = fetch_top_n_from_comet(
@@ -177,9 +203,25 @@ class EliminationStage(PipelineStage):
             top_n=TOP_N,
         )
 
+        print(f"Comet ranked symbols fetched: {len(top_df)}")
+
         if top_df.empty:
             print("No ranked Comet candidates found")
             context["candidates_df"] = pd.DataFrame()
+            maybe_write_output(settings, control_panel, "SelectedCandidates", pd.DataFrame())
+            return
+
+        watchlist_df = context.get("watchlist_df", pd.DataFrame())
+        if not watchlist_df.empty:
+            allowed_symbols = set(watchlist_df["symbol"].astype(str).str.upper())
+            before = len(top_df)
+            top_df = top_df[top_df["symbol"].astype(str).str.upper().isin(allowed_symbols)].copy()
+            print(f"After watchlist filter: {len(top_df)} / {before}")
+
+        if top_df.empty:
+            print("No Comet-ranked symbols matched the active watchlist")
+            context["candidates_df"] = pd.DataFrame()
+            maybe_write_output(settings, control_panel, "SelectedCandidates", pd.DataFrame())
             return
 
         candidates_df = apply_elimination_filter(top_df)
@@ -201,4 +243,6 @@ class EliminationStage(PipelineStage):
             )
 
         candidates_df.to_csv(settings.trade_candidates_path, index=False)
+        maybe_write_output(settings, control_panel, "SelectedCandidates", candidates_df)
+
         print(f"Saved {len(candidates_df)} candidates -> {settings.trade_candidates_path}")

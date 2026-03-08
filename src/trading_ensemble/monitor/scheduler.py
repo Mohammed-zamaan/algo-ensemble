@@ -51,7 +51,6 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
 
     now = datetime.now()
     cycle_time = now.strftime("%Y-%m-%d %H:%M:%S")
-
     is_market_open = market_is_open(now)
     is_entry_open = entry_window_open(now)
 
@@ -82,6 +81,7 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
             poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
         )
         maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
+        maybe_write_output(settings, control_panel, "PromotedSignals", pd.DataFrame())
         return pd.DataFrame()
 
     evaluations = []
@@ -90,7 +90,13 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
         evaluations.append(evaluate_setup_for_promotion(row, snapshot))
 
     eval_df = pd.DataFrame(evaluations)
-    candidates = int(eval_df["promotion_candidate"].sum()) if not eval_df.empty and "promotion_candidate" in eval_df.columns else 0
+    promoted_df = eval_df[eval_df["promotion_candidate"] == True].copy() if not eval_df.empty else pd.DataFrame()
+
+    max_promotions = int(getattr(control_panel, "max_promotions_per_cycle", 1)) if control_panel else 1
+    if not promoted_df.empty:
+        promoted_df = promoted_df.head(max_promotions).reset_index(drop=True)
+
+    candidates = len(promoted_df)
 
     status_df = build_monitor_status_df(
         cycle_time=cycle_time,
@@ -100,10 +106,17 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
         entry_open=is_entry_open,
         poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
     )
+
     maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
+    maybe_write_output(settings, control_panel, "PromotedSignals", promoted_df)
 
     print(f"  setups_seen          = {len(setups_df)}")
     print(f"  promotion_candidates = {candidates}")
+
+    if not promoted_df.empty:
+        print("  promoted symbols:")
+        for _, row in promoted_df.iterrows():
+            print(f"    - {row['symbol']} [{row['MODE']}] @ {row['latest_close']}")
 
     return eval_df
 

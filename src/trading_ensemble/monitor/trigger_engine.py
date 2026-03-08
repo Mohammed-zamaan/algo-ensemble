@@ -1,31 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
-
-
-@dataclass(frozen=True)
-class SetupSignal:
-    symbol: str
-    mode: str
-    signal_time: str
-    entry_price: float
-    stop_loss: float
-    target_price: float
-    rr_ratio: float
-    donchian_upper: float | None
-    volume_ratio: float | None
-    breakout_ready: bool
-    volume_ready: bool
-    atr_ready: bool
-    setup_reason: str
-    watchlist_conviction: float
-    sector: str
-    priority: int
 
 
 def to_yf_ticker(symbol: str) -> str:
@@ -44,9 +23,6 @@ def mode_to_market_data(mode: str) -> dict[str, str]:
 
 
 def load_setup_signals(store) -> pd.DataFrame:
-    """
-    Read current SETUP signals from SQLite.
-    """
     query = """
         SELECT
             s.signal_id,
@@ -70,29 +46,27 @@ def load_setup_signals(store) -> pd.DataFrame:
         WHERE s.signal_strength = 'SETUP'
         ORDER BY s.signal_id DESC
     """
-
     with store.connect() as conn:
         df = pd.read_sql_query(query, conn)
 
     if df.empty:
         return df
 
+    # backfill from CSV-style fields if they exist in future migrations
+    for col in [
+        "DONCHIAN_UPPER",
+        "BREAKOUT_READY",
+        "VOLUME_READY",
+        "ATR_READY",
+        "SETUP_REASON",
+        "WATCHLIST_CONVICTION",
+        "SECTOR",
+        "PRIORITY",
+    ]:
+        if col not in df.columns:
+            df[col] = None
+
     df["MODE"] = df["MODE"].astype(str).str.upper()
-    return df
-
-
-def load_setup_signals_from_csv(path: str) -> pd.DataFrame:
-    """
-    Fallback helper if you want to inspect the signals CSV instead of SQLite.
-    """
-    df = pd.read_csv(path)
-    if df.empty:
-        return df
-    if "SIGNAL_STATUS" not in df.columns:
-        return pd.DataFrame()
-    df = df[df["SIGNAL_STATUS"] == "SETUP"].copy()
-    if not df.empty and "MODE" in df.columns:
-        df["MODE"] = df["MODE"].astype(str).str.upper()
     return df
 
 
@@ -120,12 +94,24 @@ def fetch_latest_market_snapshot(symbol: str, mode: str) -> dict[str, Any] | Non
             return None
 
         latest = df.iloc[-1]
+
+        # rolling levels from live snapshot series
+        donchian_period = 20 if str(mode).upper() in {"INTRADAY", "SWING"} else 55
+        if len(df) >= donchian_period:
+            live_donchian_upper = float(df["high"].rolling(donchian_period).max().iloc[-2])
+            avg_volume = float(df["volume"].iloc[-donchian_period - 1 : -1].mean()) if len(df) >= donchian_period + 1 else float(df["volume"].mean())
+        else:
+            live_donchian_upper = float(df["high"].max())
+            avg_volume = float(df["volume"].mean())
+
         return {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "close": float(latest["close"]),
             "high": float(latest["high"]),
             "low": float(latest["low"]),
             "volume": float(latest["volume"]),
+            "avg_volume": avg_volume,
+            "live_donchian_upper": live_donchian_upper,
             "rows": len(df),
         }
     except Exception:
@@ -133,43 +119,63 @@ def fetch_latest_market_snapshot(symbol: str, mode: str) -> dict[str, Any] | Non
 
 
 def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None) -> dict[str, Any]:
-    """
-    Phase 20A skeleton:
-    - load setup
-    - fetch latest snapshot
-    - decide if it's eligible for future promotion logic
+    symbol = str(row["symbol"])
+    mode = str(row["MODE"]).upper()
 
-    This does NOT place orders yet.
-    """
     if snapshot is None:
         return {
-            "symbol": str(row["symbol"]),
-            "mode": str(row["MODE"]),
+            "symbol": symbol,
+            "MODE": mode,
             "promotion_candidate": False,
-            "reason": "NO_MARKET_DATA",
+            "promotion_reason": "NO_MARKET_DATA",
         }
 
-    entry_price = float(snapshot["close"])
-    donchian_upper = row.get("DONCHIAN_UPPER")
-    breakout_ready = False
+    latest_close = float(snapshot["close"])
+    latest_volume = float(snapshot["volume"])
+    avg_volume = float(snapshot["avg_volume"]) if snapshot["avg_volume"] > 0 else 0.0
+    live_volume_ratio = latest_volume / avg_volume if avg_volume > 0 else 0.0
 
-    if pd.notna(donchian_upper):
-        breakout_ready = entry_price >= float(donchian_upper)
+    # use live-computed Donchian
+    donchian_upper = float(snapshot["live_donchian_upper"])
+    breakout_ready = latest_close >= donchian_upper
+
+    volume_threshold = 2.0 if mode == "INTRADAY" else 1.5 if mode == "SWING" else 1.3
+    volume_ready = live_volume_ratio >= volume_threshold
+
+    atr_ready = True  # Phase 20B keeps ATR permissive; tighten in 20C if needed
+
+    promotion_candidate = breakout_ready and volume_ready and atr_ready
+
+    if not breakout_ready:
+        reason = "WAITING_BREAKOUT"
+    elif not volume_ready:
+        reason = "WAITING_VOLUME"
+    elif not atr_ready:
+        reason = "WAITING_ATR"
+    else:
+        reason = "PROMOTED"
 
     return {
-        "symbol": str(row["symbol"]),
-        "mode": str(row["MODE"]),
-        "promotion_candidate": bool(breakout_ready),
-        "reason": "BREAKOUT_READY" if breakout_ready else "WAITING_BREAKOUT",
-        "latest_close": entry_price,
+        "symbol": symbol,
+        "MODE": mode,
+        "promotion_candidate": bool(promotion_candidate),
+        "promotion_reason": reason,
+        "latest_close": round(latest_close, 4),
+        "latest_volume": round(latest_volume, 2),
+        "live_volume_ratio": round(live_volume_ratio, 4),
+        "live_donchian_upper": round(donchian_upper, 4),
         "snapshot_time": snapshot["timestamp"],
+        "signal_id": row.get("signal_id"),
+        "ENTRY_PRICE": row.get("ENTRY_PRICE"),
+        "STOP_LOSS": row.get("STOP_LOSS"),
+        "TARGET_PRICE": row.get("TARGET_PRICE"),
+        "RR_RATIO": row.get("RR_RATIO"),
+        "PRODUCT_TYPE": row.get("PRODUCT_TYPE"),
+        "SIGNAL_TIME": row.get("SIGNAL_TIME"),
     }
 
 
 def dedupe_setup_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Keep latest setup per symbol+mode.
-    """
     if df.empty:
         return df
 
@@ -178,8 +184,5 @@ def dedupe_setup_rows(df: pd.DataFrame) -> pd.DataFrame:
     if sort_cols:
         work = work.sort_values(sort_cols, ascending=False)
 
-    subset = [col for col in ["symbol", "MODE"] if col in work.columns]
-    if subset:
-        work = work.drop_duplicates(subset=subset, keep="first")
-
+    work = work.drop_duplicates(subset=["symbol", "MODE"], keep="first")
     return work.reset_index(drop=True)

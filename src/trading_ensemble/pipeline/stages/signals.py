@@ -196,46 +196,85 @@ def generate_signal(row: pd.Series, mode: str) -> tuple[dict | None, str]:
     vol_ok = vol_ratio >= cfg["volume_mult"]
     atr_ok = atr >= cfg["atr_min"]
 
-    strength = get_signal_strength(price_above, vol_ratio, atr_ratio, adx)
-    if strength == "REJECTED":
-        return None, "breakout"
-    if strength == "WEAK":
-        return None, "strength"
-
-    if not vol_ok:
-        return None, "volume"
-
-    if not atr_ok:
-        return None, "atr"
-
     stop_loss = round(entry_price - cfg["atr_sl_mult"] * atr, 2)
     target_price = round(entry_price + cfg["atr_target_mult"] * atr, 2)
-    rr_ratio = round((target_price - entry_price) / (entry_price - stop_loss), 2)
+    rr_ratio = round((target_price - entry_price) / (entry_price - stop_loss), 2) if (entry_price - stop_loss) > 0 else 0.0
+
+    base = {
+        "symbol": symbol,
+        "MODE": mode,
+        "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0)),
+        "ENTRY_PRICE": entry_price,
+        "STOP_LOSS": stop_loss,
+        "TARGET_PRICE": target_price,
+        "RR_RATIO": rr_ratio,
+        "ATR": round(atr, 4),
+        "ATR_RATIO_PCT": round(atr_ratio, 4),
+        "ADX": round(adx, 2),
+        "VOLUME_RATIO": round(vol_ratio, 2),
+        "DONCHIAN_UPPER": round(donchian_upper, 2),
+        "BREAKOUT_READY": bool(price_above),
+        "VOLUME_READY": bool(vol_ok),
+        "ATR_READY": bool(atr_ok),
+        "PRODUCT_TYPE": cfg["product_type"],
+        "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    # Setup but not triggered yet
+    if not price_above:
+        return {
+            **base,
+            "BREAKOUT_15M": False,
+            "SIGNAL_STRENGTH": "SETUP",
+            "SIGNAL_STATUS": "SETUP",
+            "SETUP_REASON": "WAITING_BREAKOUT",
+        }, "setup"
+
+    strength = get_signal_strength(price_above, vol_ratio, atr_ratio, adx)
+
+    if strength == "WEAK":
+        return {
+            **base,
+            "BREAKOUT_15M": False,
+            "SIGNAL_STRENGTH": "SETUP",
+            "SIGNAL_STATUS": "SETUP",
+            "SETUP_REASON": "WEAK_CONFIRMATION",
+        }, "setup"
+
+    if not vol_ok:
+        return {
+            **base,
+            "BREAKOUT_15M": False,
+            "SIGNAL_STRENGTH": "SETUP",
+            "SIGNAL_STATUS": "SETUP",
+            "SETUP_REASON": "LOW_VOLUME_CONFIRMATION",
+        }, "setup"
+
+    if not atr_ok:
+        return {
+            **base,
+            "BREAKOUT_15M": False,
+            "SIGNAL_STRENGTH": "SETUP",
+            "SIGNAL_STATUS": "SETUP",
+            "SETUP_REASON": "LOW_ATR",
+        }, "setup"
 
     if rr_ratio < cfg["min_rr"]:
-        return None, "rr"
+        return {
+            **base,
+            "BREAKOUT_15M": False,
+            "SIGNAL_STRENGTH": "SETUP",
+            "SIGNAL_STATUS": "SETUP",
+            "SETUP_REASON": "LOW_RR",
+        }, "setup"
 
-    return (
-        {
-            "symbol": symbol,
-            "MODE": mode,
-            "COMPOSITE_SCORE": float(row.get("COMPOSITE_SCORE", 0)),
-            "ENTRY_PRICE": entry_price,
-            "STOP_LOSS": stop_loss,
-            "TARGET_PRICE": target_price,
-            "RR_RATIO": rr_ratio,
-            "ATR": round(atr, 4),
-            "ATR_RATIO_PCT": round(atr_ratio, 4),
-            "ADX": round(adx, 2),
-            "VOLUME_RATIO": round(vol_ratio, 2),
-            "DONCHIAN_UPPER": round(donchian_upper, 2),
-            "BREAKOUT_15M": price_above and vol_ok and atr_ok,
-            "SIGNAL_STRENGTH": strength,
-            "PRODUCT_TYPE": cfg["product_type"],
-            "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        },
-        "ok",
-    )
+    return {
+        **base,
+        "BREAKOUT_15M": True,
+        "SIGNAL_STRENGTH": strength,
+        "SIGNAL_STATUS": "CONFIRMED",
+        "SETUP_REASON": "",
+    }, "confirmed"
 
 
 class SignalsStage(PipelineStage):
@@ -263,12 +302,8 @@ class SignalsStage(PipelineStage):
         signals = []
         diag = {
             "no_data": 0,
-            "breakout": 0,
-            "strength": 0,
-            "volume": 0,
-            "atr": 0,
-            "rr": 0,
-            "ok": 0,
+            "setup": 0,
+            "confirmed": 0,
         }
 
         for _, row in candidates_df.iterrows():
@@ -295,12 +330,8 @@ class SignalsStage(PipelineStage):
 
         print("Signals diagnostics:")
         print(f"  rejected_no_data   = {diag['no_data']}")
-        print(f"  rejected_breakout  = {diag['breakout']}")
-        print(f"  rejected_strength  = {diag['strength']}")
-        print(f"  rejected_volume    = {diag['volume']}")
-        print(f"  rejected_atr       = {diag['atr']}")
-        print(f"  rejected_rr        = {diag['rr']}")
-        print(f"  generated_signals  = {diag['ok']}")
+        print(f"  setup_signals      = {diag['setup']}")
+        print(f"  confirmed_signals  = {diag['confirmed']}")
 
         for _, row in signals_df.iterrows():
             store.insert_signal(
@@ -321,4 +352,4 @@ class SignalsStage(PipelineStage):
 
         signals_df.to_csv(settings.trade_signals_path, index=False)
         maybe_write_output(settings, control_panel, "ConfirmedSignals", signals_df)
-        print(f"Saved {len(signals_df)} multi-strategy signals -> {settings.trade_signals_path}")
+        print(f"Saved {len(signals_df)} signals (setup + confirmed) -> {settings.trade_signals_path}")

@@ -25,6 +25,15 @@ class ControlPanel:
     force_exit_all: bool = False
     write_outputs_to_sheets: bool = True
 
+    # Phase 20A — trigger monitor controls
+    trigger_monitor_enabled: bool = True
+    trigger_poll_seconds: int = 60
+    market_open_time: str = "09:15"
+    new_entry_cutoff_time: str = "15:00"
+    max_promotions_per_cycle: int = 1
+    dedupe_open_positions: bool = True
+    dedupe_pending_orders: bool = True
+
 
 def _to_bool(value, default: bool) -> bool:
     if value is None:
@@ -97,6 +106,15 @@ def build_control_panel(raw: dict[str, object]) -> ControlPanel:
         pause_new_entries=_to_bool(raw.get("pause_new_entries"), False),
         force_exit_all=_to_bool(raw.get("force_exit_all"), False),
         write_outputs_to_sheets=_to_bool(raw.get("write_outputs_to_sheets"), True),
+
+        # Phase 20A — trigger monitor controls
+        trigger_monitor_enabled=_to_bool(raw.get("trigger_monitor_enabled"), True),
+        trigger_poll_seconds=_to_int(raw.get("trigger_poll_seconds"), 60),
+        market_open_time=_to_str(raw.get("market_open_time"), "09:15"),
+        new_entry_cutoff_time=_to_str(raw.get("new_entry_cutoff_time"), "15:00"),
+        max_promotions_per_cycle=_to_int(raw.get("max_promotions_per_cycle"), 1),
+        dedupe_open_positions=_to_bool(raw.get("dedupe_open_positions"), True),
+        dedupe_pending_orders=_to_bool(raw.get("dedupe_pending_orders"), True),
     )
 
 

@@ -82,7 +82,26 @@ WORKSHEET_COLUMN_ORDERS = {
         "PRODUCT_TYPE",
         "TRANSACTION",
     ],
-        "PromotedSignals": [
+    "TriggerEvaluations": [
+        "symbol",
+        "MODE",
+        "promotion_candidate",
+        "promotion_reason",
+        "readiness_score",
+        "latest_close",
+        "live_donchian_upper",
+        "breakout_gap_pct",
+        "latest_volume",
+        "live_volume_ratio",
+        "volume_gap_pct",
+        "snapshot_time",
+        "ENTRY_PRICE",
+        "STOP_LOSS",
+        "TARGET_PRICE",
+        "RR_RATIO",
+        "PRODUCT_TYPE",
+    ],
+    "PromotedSignals": [
         "symbol",
         "MODE",
         "promotion_candidate",
@@ -101,7 +120,6 @@ WORKSHEET_COLUMN_ORDERS = {
         "metric",
         "value",
     ],
-    
 }
 
 

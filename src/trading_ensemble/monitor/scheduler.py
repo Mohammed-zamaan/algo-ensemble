@@ -82,6 +82,7 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
 
     if setups_df.empty:
         print("  no setup signals to monitor")
+        maybe_write_output(settings, control_panel, "TriggerEvaluations", pd.DataFrame())
         maybe_write_output(settings, control_panel, "PromotedSignals", pd.DataFrame())
         status_df = build_monitor_status_df(
             cycle_time=cycle_time,
@@ -103,6 +104,14 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
         evaluations.append(evaluate_setup_for_promotion(row, snapshot))
 
     eval_df = pd.DataFrame(evaluations)
+    if not eval_df.empty:
+        eval_df = eval_df.sort_values(
+            ["promotion_candidate", "readiness_score"],
+            ascending=[False, False],
+        ).reset_index(drop=True)
+
+    maybe_write_output(settings, control_panel, "TriggerEvaluations", eval_df)
+
     promoted_df = eval_df[eval_df["promotion_candidate"] == True].copy() if not eval_df.empty else pd.DataFrame()
 
     max_promotions = int(getattr(control_panel, "max_promotions_per_cycle", 1)) if control_panel else 1
@@ -155,6 +164,18 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
     print(f"  approved_orders      = {approved_orders_count}")
     print(f"  executed_orders      = {executed_orders_count}")
 
+    if not eval_df.empty:
+        top = eval_df.head(5)
+        print("  top trigger evaluations:")
+        for _, row in top.iterrows():
+            print(
+                f"    - {row['symbol']} [{row['MODE']}] "
+                f"reason={row['promotion_reason']} "
+                f"breakout_gap={row.get('breakout_gap_pct')} "
+                f"volume_gap={row.get('volume_gap_pct')} "
+                f"score={row.get('readiness_score')}"
+            )
+
     return eval_df
 
 
@@ -174,3 +195,45 @@ def run_trigger_loop(context_factory, max_cycles: int | None = None) -> None:
             return
 
         time.sleep(poll_seconds)
+
+def build_near_trigger_alerts(eval_df, control_panel):
+    import pandas as pd
+
+    if eval_df is None or eval_df.empty:
+        return pd.DataFrame()
+
+    if control_panel is None:
+        return pd.DataFrame()
+
+    if not getattr(control_panel, "near_trigger_alerts_enabled", True):
+        return pd.DataFrame()
+
+    min_score = float(getattr(control_panel, "near_trigger_min_score", 95.0))
+    max_breakout_gap = float(getattr(control_panel, "near_trigger_max_breakout_gap_pct", 1.0))
+    max_alerts = int(getattr(control_panel, "max_near_trigger_alerts", 10))
+
+    alerts = eval_df.copy()
+
+    if "promotion_candidate" in alerts.columns:
+        alerts = alerts[alerts["promotion_candidate"] == False]
+
+    if "readiness_score" in alerts.columns:
+        alerts = alerts[alerts["readiness_score"] >= min_score]
+
+    if "breakout_gap_pct" in alerts.columns:
+        alerts = alerts[alerts["breakout_gap_pct"] <= max_breakout_gap]
+
+    if alerts.empty:
+        return alerts
+
+    alerts = alerts.sort_values(
+        ["readiness_score", "breakout_gap_pct", "volume_gap_pct"],
+        ascending=[False, True, True],
+    ).head(max_alerts).reset_index(drop=True)
+
+    alerts["ALERT_LEVEL"] = alerts["readiness_score"].apply(
+        lambda x: "HOT" if float(x) >= 99 else "WARM"
+    )
+
+    return alerts
+

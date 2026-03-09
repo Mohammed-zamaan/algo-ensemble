@@ -22,6 +22,12 @@ def mode_to_market_data(mode: str) -> dict[str, str]:
     return {"period": "2d", "interval": "15m"}
 
 
+def _safe_gap_pct(current: float, required: float) -> float:
+    if required <= 0:
+        return 0.0
+    return round(max(0.0, ((required - current) / required) * 100), 4)
+
+
 def load_setup_signals(store) -> pd.DataFrame:
     query = """
         SELECT
@@ -51,19 +57,6 @@ def load_setup_signals(store) -> pd.DataFrame:
 
     if df.empty:
         return df
-
-    for col in [
-        "DONCHIAN_UPPER",
-        "BREAKOUT_READY",
-        "VOLUME_READY",
-        "ATR_READY",
-        "SETUP_REASON",
-        "WATCHLIST_CONVICTION",
-        "SECTOR",
-        "PRIORITY",
-    ]:
-        if col not in df.columns:
-            df[col] = None
 
     df["MODE"] = df["MODE"].astype(str).str.upper()
     return df
@@ -126,6 +119,13 @@ def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None
             "MODE": mode,
             "promotion_candidate": False,
             "promotion_reason": "NO_MARKET_DATA",
+            "latest_close": None,
+            "live_donchian_upper": None,
+            "breakout_gap_pct": None,
+            "latest_volume": None,
+            "live_volume_ratio": None,
+            "volume_gap_pct": None,
+            "snapshot_time": None,
         }
 
     latest_close = float(snapshot["close"])
@@ -140,6 +140,9 @@ def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None
     volume_ready = live_volume_ratio >= volume_threshold
     atr_ready = True
 
+    breakout_gap_pct = _safe_gap_pct(latest_close, donchian_upper)
+    volume_gap_pct = _safe_gap_pct(live_volume_ratio, volume_threshold)
+
     promotion_candidate = breakout_ready and volume_ready and atr_ready
 
     if not breakout_ready:
@@ -151,15 +154,23 @@ def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None
     else:
         reason = "PROMOTED"
 
+    readiness_score = round(
+        100.0 - breakout_gap_pct - volume_gap_pct,
+        4,
+    )
+
     return {
         "symbol": symbol,
         "MODE": mode,
         "promotion_candidate": bool(promotion_candidate),
         "promotion_reason": reason,
         "latest_close": round(latest_close, 4),
+        "live_donchian_upper": round(donchian_upper, 4),
+        "breakout_gap_pct": breakout_gap_pct,
         "latest_volume": round(latest_volume, 2),
         "live_volume_ratio": round(live_volume_ratio, 4),
-        "live_donchian_upper": round(donchian_upper, 4),
+        "volume_gap_pct": volume_gap_pct,
+        "readiness_score": readiness_score,
         "snapshot_time": snapshot["timestamp"],
         "signal_id": row.get("signal_id"),
         "ENTRY_PRICE": row.get("ENTRY_PRICE"),

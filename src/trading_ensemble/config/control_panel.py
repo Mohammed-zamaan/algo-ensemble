@@ -114,10 +114,7 @@ def build_control_panel(raw: dict[str, object]) -> ControlPanel:
         near_trigger_min_score=_to_float(raw.get("near_trigger_min_score"), 95.0),
         near_trigger_max_breakout_gap_pct=_to_float(raw.get("near_trigger_max_breakout_gap_pct"), 1.0),
         max_near_trigger_alerts=_to_int(raw.get("max_near_trigger_alerts"), 10),
-    near_trigger_alerts_enabled: bool = True
-    near_trigger_min_score: float = 95.0
-    near_trigger_max_breakout_gap_pct: float = 1.0
-    max_near_trigger_alerts: int = 10
+    
 
         # Phase 20A — trigger monitor controls
         trigger_monitor_enabled=_to_bool(raw.get("trigger_monitor_enabled"), True),

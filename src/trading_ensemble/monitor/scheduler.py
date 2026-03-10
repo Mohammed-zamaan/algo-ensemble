@@ -5,6 +5,7 @@ from datetime import datetime, time as dt_time
 
 import pandas as pd
 
+from trading_ensemble.dashboard.command_center import build_command_center
 from trading_ensemble.data.sheets_output import maybe_write_output
 from trading_ensemble.monitor.trigger_engine import (
     convert_promotions_to_signals,
@@ -13,6 +14,10 @@ from trading_ensemble.monitor.trigger_engine import (
     fetch_latest_market_snapshot,
     filter_promotion_candidates,
     load_setup_signals,
+)
+from trading_ensemble.notifications.router import (
+    send_near_trigger_alerts,
+    send_promotion_alerts,
 )
 from trading_ensemble.pipeline.stages.execution import ExecutionStage
 from trading_ensemble.pipeline.stages.risk import RiskStage
@@ -54,151 +59,7 @@ def build_monitor_status_df(
     )
 
 
-def run_trigger_cycle(context: dict) -> pd.DataFrame:
-    settings = context["settings"]
-    control_panel = context.get("control_panel")
-    store = context["store"]
-
-    now = datetime.now()
-    cycle_time = now.strftime("%Y-%m-%d %H:%M:%S")
-    is_market_open = market_is_open(now)
-    is_entry_open = entry_window_open(now)
-
-    print("Trigger monitor cycle:")
-    print(f"  cycle_time           = {cycle_time}")
-    print(f"  market_open          = {is_market_open}")
-    print(f"  entry_window_open    = {is_entry_open}")
-
-    if control_panel is not None and not getattr(control_panel, "trigger_monitor_enabled", True):
-        print("  monitor disabled by ControlPanel")
-        return pd.DataFrame()
-
-    if not is_market_open or not is_entry_open:
-        print("  monitor idle: outside entry window")
-        return pd.DataFrame()
-
-    setups_df = load_setup_signals(store)
-    setups_df = dedupe_setup_rows(setups_df)
-
-    if setups_df.empty:
-        print("  no setup signals to monitor")
-        maybe_write_output(settings, control_panel, "TriggerEvaluations", pd.DataFrame())
-        maybe_write_output(settings, control_panel, "PromotedSignals", pd.DataFrame())
-        status_df = build_monitor_status_df(
-            cycle_time=cycle_time,
-            setups_seen=0,
-            promotion_candidates=0,
-            promoted_confirmed=0,
-            approved_orders=0,
-            executed_orders=0,
-            market_open=is_market_open,
-            entry_open=is_entry_open,
-            poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
-        )
-        maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
-        return pd.DataFrame()
-
-    evaluations = []
-    for _, row in setups_df.iterrows():
-        snapshot = fetch_latest_market_snapshot(str(row["symbol"]), str(row["MODE"]))
-        evaluations.append(evaluate_setup_for_promotion(row, snapshot))
-
-    eval_df = pd.DataFrame(evaluations)
-    if not eval_df.empty:
-        eval_df = eval_df.sort_values(
-            ["promotion_candidate", "readiness_score"],
-            ascending=[False, False],
-        ).reset_index(drop=True)
-
-    maybe_write_output(settings, control_panel, "TriggerEvaluations", eval_df)
-
-    promoted_df = eval_df[eval_df["promotion_candidate"] == True].copy() if not eval_df.empty else pd.DataFrame()
-
-    max_promotions = int(getattr(control_panel, "max_promotions_per_cycle", 1)) if control_panel else 1
-    promoted_df = filter_promotion_candidates(store, promoted_df)
-    if not promoted_df.empty:
-        promoted_df = promoted_df.head(max_promotions).reset_index(drop=True)
-
-    maybe_write_output(settings, control_panel, "PromotedSignals", promoted_df)
-
-    promoted_signals_df = convert_promotions_to_signals(promoted_df)
-    approved_orders_count = 0
-    executed_orders_count = 0
-
-    if not promoted_signals_df.empty:
-        print(f"  promoted_confirmed   = {len(promoted_signals_df)}")
-
-        promotion_context = {
-            "settings": settings,
-            "store": store,
-            "run_id": context.get("run_id"),
-            "control_panel": control_panel,
-            "signals_df": promoted_signals_df,
-        }
-
-        RiskStage().run(promotion_context)
-        orders_df = promotion_context.get("orders_df", pd.DataFrame())
-        approved_orders_count = len(orders_df)
-
-        ExecutionStage().run(promotion_context)
-        execution_df = promotion_context.get("execution_results_df", pd.DataFrame())
-        executed_orders_count = len(execution_df)
-
-    candidates = len(promoted_df)
-
-    status_df = build_monitor_status_df(
-        cycle_time=cycle_time,
-        setups_seen=len(setups_df),
-        promotion_candidates=candidates,
-        promoted_confirmed=len(promoted_signals_df),
-        approved_orders=approved_orders_count,
-        executed_orders=executed_orders_count,
-        market_open=is_market_open,
-        entry_open=is_entry_open,
-        poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
-    )
-    maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
-
-    print(f"  setups_seen          = {len(setups_df)}")
-    print(f"  promotion_candidates = {candidates}")
-    print(f"  approved_orders      = {approved_orders_count}")
-    print(f"  executed_orders      = {executed_orders_count}")
-
-    if not eval_df.empty:
-        top = eval_df.head(5)
-        print("  top trigger evaluations:")
-        for _, row in top.iterrows():
-            print(
-                f"    - {row['symbol']} [{row['MODE']}] "
-                f"reason={row['promotion_reason']} "
-                f"breakout_gap={row.get('breakout_gap_pct')} "
-                f"volume_gap={row.get('volume_gap_pct')} "
-                f"score={row.get('readiness_score')}"
-            )
-
-    return eval_df
-
-
-def run_trigger_loop(context_factory, max_cycles: int | None = None) -> None:
-    cycles = 0
-
-    while True:
-        context = context_factory()
-        control_panel = context.get("control_panel")
-        poll_seconds = int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60
-
-        run_trigger_cycle(context)
-
-        cycles += 1
-        if max_cycles is not None and cycles >= max_cycles:
-            print(f"Trigger monitor exiting after {cycles} cycle(s)")
-            return
-
-        time.sleep(poll_seconds)
-
 def build_near_trigger_alerts(eval_df, control_panel):
-    import pandas as pd
-
     if eval_df is None or eval_df.empty:
         return pd.DataFrame()
 
@@ -237,3 +98,184 @@ def build_near_trigger_alerts(eval_df, control_panel):
 
     return alerts
 
+
+def run_trigger_cycle(context: dict) -> pd.DataFrame:
+    settings = context["settings"]
+    control_panel = context.get("control_panel")
+    store = context["store"]
+
+    now = datetime.now()
+    cycle_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    is_market_open = market_is_open(now)
+    is_entry_open = entry_window_open(now)
+
+    print("Trigger monitor cycle:")
+    print(f"  cycle_time           = {cycle_time}")
+    print(f"  market_open          = {is_market_open}")
+    print(f"  entry_window_open    = {is_entry_open}")
+
+    if control_panel is not None and not getattr(control_panel, "trigger_monitor_enabled", True):
+        print("  monitor disabled by ControlPanel")
+        return pd.DataFrame()
+
+    if not is_market_open or not is_entry_open:
+        print("  monitor idle: outside entry window")
+        return pd.DataFrame()
+
+    setups_df = load_setup_signals(store)
+    setups_df = dedupe_setup_rows(setups_df)
+
+    if setups_df.empty:
+        print("  no setup signals to monitor")
+        maybe_write_output(settings, control_panel, "TriggerEvaluations", pd.DataFrame())
+        maybe_write_output(settings, control_panel, "NearTriggerAlerts", pd.DataFrame())
+        maybe_write_output(settings, control_panel, "PromotedSignals", pd.DataFrame())
+
+        status_df = build_monitor_status_df(
+            cycle_time=cycle_time,
+            setups_seen=0,
+            promotion_candidates=0,
+            promoted_confirmed=0,
+            approved_orders=0,
+            executed_orders=0,
+            market_open=is_market_open,
+            entry_open=is_entry_open,
+            poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
+        )
+        maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
+
+        context["trigger_eval_df"] = pd.DataFrame()
+        context["near_trigger_alerts_df"] = pd.DataFrame()
+        context["promoted_df"] = pd.DataFrame()
+        context["orders_df"] = pd.DataFrame()
+        context["execution_results_df"] = pd.DataFrame()
+
+        command_center_df = build_command_center(context)
+        maybe_write_output(settings, control_panel, "CommandCenter", command_center_df)
+        return pd.DataFrame()
+
+    evaluations = []
+    for _, row in setups_df.iterrows():
+        snapshot = fetch_latest_market_snapshot(str(row["symbol"]), str(row["MODE"]))
+        evaluations.append(evaluate_setup_for_promotion(row, snapshot))
+
+    eval_df = pd.DataFrame(evaluations)
+    if not eval_df.empty:
+        eval_df = eval_df.sort_values(
+            ["promotion_candidate", "readiness_score"],
+            ascending=[False, False],
+        ).reset_index(drop=True)
+
+    maybe_write_output(settings, control_panel, "TriggerEvaluations", eval_df)
+
+    alerts_df = build_near_trigger_alerts(eval_df, control_panel)
+    maybe_write_output(settings, control_panel, "NearTriggerAlerts", alerts_df)
+    send_near_trigger_alerts(alerts_df)
+
+    context["trigger_eval_df"] = eval_df
+    context["near_trigger_alerts_df"] = alerts_df
+
+    promoted_df = eval_df[eval_df["promotion_candidate"] == True].copy() if not eval_df.empty else pd.DataFrame()
+
+    max_promotions = int(getattr(control_panel, "max_promotions_per_cycle", 1)) if control_panel else 1
+    promoted_df = filter_promotion_candidates(store, promoted_df)
+    if not promoted_df.empty:
+        promoted_df = promoted_df.head(max_promotions).reset_index(drop=True)
+
+    maybe_write_output(settings, control_panel, "PromotedSignals", promoted_df)
+    send_promotion_alerts(promoted_df)
+    context["promoted_df"] = promoted_df
+
+    promoted_signals_df = convert_promotions_to_signals(promoted_df)
+    approved_orders_count = 0
+    executed_orders_count = 0
+
+    if not promoted_signals_df.empty:
+        print(f"  promoted_confirmed   = {len(promoted_signals_df)}")
+
+        promotion_context = {
+            "settings": settings,
+            "store": store,
+            "run_id": context.get("run_id"),
+            "control_panel": control_panel,
+            "signals_df": promoted_signals_df,
+        }
+
+        RiskStage().run(promotion_context)
+        orders_df = promotion_context.get("orders_df", pd.DataFrame())
+        approved_orders_count = len(orders_df)
+        context["orders_df"] = orders_df
+
+        ExecutionStage().run(promotion_context)
+        execution_df = promotion_context.get("execution_results_df", pd.DataFrame())
+        executed_orders_count = len(execution_df)
+        context["execution_results_df"] = execution_df
+    else:
+        context["orders_df"] = pd.DataFrame()
+        context["execution_results_df"] = pd.DataFrame()
+
+    candidates = len(promoted_df)
+
+    status_df = build_monitor_status_df(
+        cycle_time=cycle_time,
+        setups_seen=len(setups_df),
+        promotion_candidates=candidates,
+        promoted_confirmed=len(promoted_signals_df),
+        approved_orders=approved_orders_count,
+        executed_orders=executed_orders_count,
+        market_open=is_market_open,
+        entry_open=is_entry_open,
+        poll_seconds=int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60,
+    )
+    maybe_write_output(settings, control_panel, "TriggerMonitorStatus", status_df)
+
+    command_center_df = build_command_center(context)
+    maybe_write_output(settings, control_panel, "CommandCenter", command_center_df)
+
+    print(f"  setups_seen          = {len(setups_df)}")
+    print(f"  promotion_candidates = {candidates}")
+    print(f"  approved_orders      = {approved_orders_count}")
+    print(f"  executed_orders      = {executed_orders_count}")
+
+    if not eval_df.empty:
+        top = eval_df.head(5)
+        print("  top trigger evaluations:")
+        for _, row in top.iterrows():
+            print(
+                f"    - {row['symbol']} [{row['MODE']}] "
+                f"reason={row['promotion_reason']} "
+                f"breakout_gap={row.get('breakout_gap_pct')} "
+                f"volume_gap={row.get('volume_gap_pct')} "
+                f"score={row.get('readiness_score')}"
+            )
+
+    if not alerts_df.empty:
+        print("  near-trigger alerts:")
+        for _, row in alerts_df.iterrows():
+            print(
+                f"    - {row['symbol']} [{row['MODE']}] "
+                f"level={row['ALERT_LEVEL']} "
+                f"score={row['readiness_score']} "
+                f"breakout_gap={row['breakout_gap_pct']} "
+                f"volume_gap={row['volume_gap_pct']}"
+            )
+
+    return eval_df
+
+
+def run_trigger_loop(context_factory, max_cycles: int | None = None) -> None:
+    cycles = 0
+
+    while True:
+        context = context_factory()
+        control_panel = context.get("control_panel")
+        poll_seconds = int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60
+
+        run_trigger_cycle(context)
+
+        cycles += 1
+        if max_cycles is not None and cycles >= max_cycles:
+            print(f"Trigger monitor exiting after {cycles} cycle(s)")
+            return
+
+        time.sleep(poll_seconds)

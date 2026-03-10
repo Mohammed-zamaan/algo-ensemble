@@ -19,6 +19,10 @@ from trading_ensemble.notifications.router import (
     send_near_trigger_alerts,
     send_promotion_alerts,
 )
+from trading_ensemble.regime.regime_engine import (
+    apply_regime_overrides,
+    fetch_index_regime,
+)
 from trading_ensemble.pipeline.stages.execution import ExecutionStage
 from trading_ensemble.pipeline.stages.risk import RiskStage
 
@@ -121,6 +125,16 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
     if not is_market_open or not is_entry_open:
         print("  monitor idle: outside entry window")
         return pd.DataFrame()
+
+    regime_snapshot = fetch_index_regime()
+    regime_state = apply_regime_overrides(control_panel, regime_snapshot)
+    context["market_regime"] = regime_state["market_regime"]
+    context["effective_risk_multiplier"] = regime_state["effective_risk_multiplier"]
+    context["effective_max_new_orders_per_run"] = regime_state["effective_max_new_orders_per_run"]
+
+    print(f"  market_regime        = {context['market_regime']}")
+    print(f"  effective_risk_mult  = {context['effective_risk_multiplier']}")
+    print(f"  effective_max_orders = {context['effective_max_new_orders_per_run']}")
 
     setups_df = load_setup_signals(store)
     setups_df = dedupe_setup_rows(setups_df)

@@ -138,6 +138,11 @@ WORKSHEET_COLUMN_ORDERS = {
         "metric",
         "value",
     ],
+    "CommandCenter": [
+        "section",
+        "field",
+        "value",
+    ],
 
 }
 

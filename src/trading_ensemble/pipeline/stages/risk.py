@@ -52,11 +52,12 @@ class RiskStage(PipelineStage):
 
         filtered["MODE"] = filtered["MODE"].astype(str).str.upper()
 
-        max_new_orders_per_run = (
+        max_new_orders_per_run = int(context.get(
+            "effective_max_new_orders_per_run",
             getattr(control_panel, "max_new_orders_per_run", DEFAULT_MAX_POSITIONS)
             if control_panel is not None
             else DEFAULT_MAX_POSITIONS
-        )
+        ))
         max_intraday_orders = (
             getattr(control_panel, "max_intraday_orders", max_new_orders_per_run)
             if control_panel is not None
@@ -72,10 +73,13 @@ class RiskStage(PipelineStage):
             if control_panel is not None
             else max_new_orders_per_run
         )
-        risk_multiplier = (
-            float(getattr(control_panel, "risk_multiplier", 1.0))
-            if control_panel is not None
-            else 1.0
+        risk_multiplier = float(
+            context.get(
+                "effective_risk_multiplier",
+                float(getattr(control_panel, "risk_multiplier", 1.0))
+                if control_panel is not None
+                else 1.0
+            )
         )
 
         mode_caps = {
@@ -144,6 +148,7 @@ class RiskStage(PipelineStage):
         print(f"  selected_swing         = {mode_selected['SWING']}")
         print(f"  selected_positional    = {mode_selected['POSITIONAL']}")
         print(f"  total_orders_selected  = {len(decisions)}")
+        print(f"  market_regime           = {context.get('market_regime', 'UNKNOWN')}")
         print(f"  risk_multiplier        = {risk_multiplier:.2f}")
         print(f"  effective_capital      = {effective_capital:.2f}")
 

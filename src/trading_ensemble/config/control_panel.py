@@ -28,6 +28,12 @@ class ControlPanel:
     near_trigger_min_score: float = 95.0
     near_trigger_max_breakout_gap_pct: float = 1.0
     max_near_trigger_alerts: int = 10
+    trend_risk_multiplier: float = 1.15
+    chop_risk_multiplier: float = 0.60
+    high_vol_risk_multiplier: float = 0.50
+    trend_max_new_orders: int = 4
+    chop_max_new_orders: int = 2
+    high_vol_max_new_orders: int = 1
 
     # Phase 20A — trigger monitor controls
     trigger_monitor_enabled: bool = True
@@ -114,6 +120,12 @@ def build_control_panel(raw: dict[str, object]) -> ControlPanel:
         near_trigger_min_score=_to_float(raw.get("near_trigger_min_score"), 95.0),
         near_trigger_max_breakout_gap_pct=_to_float(raw.get("near_trigger_max_breakout_gap_pct"), 1.0),
         max_near_trigger_alerts=_to_int(raw.get("max_near_trigger_alerts"), 10),
+        trend_risk_multiplier=_to_float(raw.get("trend_risk_multiplier"), 1.15),
+        chop_risk_multiplier=_to_float(raw.get("chop_risk_multiplier"), 0.60),
+        high_vol_risk_multiplier=_to_float(raw.get("high_vol_risk_multiplier"), 0.50),
+        trend_max_new_orders=_to_int(raw.get("trend_max_new_orders"), 4),
+        chop_max_new_orders=_to_int(raw.get("chop_max_new_orders"), 2),
+        high_vol_max_new_orders=_to_int(raw.get("high_vol_max_new_orders"), 1),
     
 
         # Phase 20A — trigger monitor controls

@@ -116,7 +116,6 @@ WORKSHEET_COLUMN_ORDERS = {
         "RR_RATIO",
         "PRODUCT_TYPE",
     ],
-    "TriggerMonitorStatus": [
     "NearTriggerAlerts": [
         "symbol",
         "MODE",
@@ -135,9 +134,11 @@ WORKSHEET_COLUMN_ORDERS = {
         "RR_RATIO",
         "PRODUCT_TYPE",
     ],
+    "TriggerMonitorStatus": [
         "metric",
         "value",
     ],
+
 }
 
 

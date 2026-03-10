@@ -4,6 +4,7 @@ import pandas as pd
 
 from trading_ensemble.data.sheets_output import maybe_write_output
 from trading_ensemble.risk.allocator import AccountAllocator, CandidateSignal
+from trading_ensemble.notifications.router import send_order_alerts
 
 from ..engine import PipelineStage
 
@@ -188,4 +189,5 @@ class RiskStage(PipelineStage):
 
         orders_df.to_csv(settings.trade_orders_path, index=False)
         maybe_write_output(settings, control_panel, "ApprovedOrders", orders_df)
+        send_order_alerts(orders_df)
         print(f"Saved {len(orders_df)} approved orders -> {settings.trade_orders_path}")

@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from trading_ensemble.data.sheets_output import maybe_write_output
+from trading_ensemble.notifications.router import send_execution_alerts
 from ..engine import PipelineStage
 
 
@@ -131,6 +132,7 @@ class ExecutionStage(PipelineStage):
 
         execution_results_df.to_csv(paper_path, index=False)
         maybe_write_output(settings, control_panel, "ExecutionLog", execution_results_df)
+        send_execution_alerts(execution_results_df)
 
         print(f"  executed             = {executed}")
         print(f"  skipped              = {skipped}")

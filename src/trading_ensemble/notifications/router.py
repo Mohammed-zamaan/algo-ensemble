@@ -99,3 +99,61 @@ def send_promotion_alerts(promoted_df: pd.DataFrame) -> None:
 
         if send_telegram_message(text):
             _mark_sent(alert_key)
+
+
+def send_order_alerts(orders_df: pd.DataFrame) -> None:
+    if orders_df is None or orders_df.empty:
+        return
+
+    for _, row in orders_df.iterrows():
+        symbol = str(row.get("symbol", "UNKNOWN"))
+        mode = str(row.get("MODE", "UNKNOWN"))
+        qty = row.get("QUANTITY", "")
+        entry = row.get("ENTRY_PRICE", "")
+        sl = row.get("STOP_LOSS", "")
+        tgt = row.get("TARGET_PRICE", "")
+        status = row.get("STATUS", "")
+
+        alert_key = f"{_day_key()}|order|{symbol}|{mode}"
+        if _already_sent(alert_key):
+            continue
+
+        text = (
+            f"ORDER APPROVED\n"
+            f"{symbol} [{mode}]\n"
+            f"Qty: {qty}\n"
+            f"Entry: {entry}\n"
+            f"SL: {sl}\n"
+            f"Target: {tgt}\n"
+            f"Status: {status}"
+        )
+
+        if send_telegram_message(text):
+            _mark_sent(alert_key)
+
+
+def send_execution_alerts(execution_df: pd.DataFrame) -> None:
+    if execution_df is None or execution_df.empty:
+        return
+
+    for _, row in execution_df.iterrows():
+        symbol = str(row.get("symbol", "UNKNOWN"))
+        mode = str(row.get("MODE", "UNKNOWN"))
+        qty = row.get("QUANTITY", "")
+        fill = row.get("FILL_PRICE", "")
+        status = row.get("STATUS", "")
+
+        alert_key = f"{_day_key()}|execution|{symbol}|{mode}"
+        if _already_sent(alert_key):
+            continue
+
+        text = (
+            f"EXECUTED\n"
+            f"{symbol} [{mode}]\n"
+            f"Status: {status}\n"
+            f"Qty: {qty}\n"
+            f"Fill: {fill}"
+        )
+
+        if send_telegram_message(text):
+            _mark_sent(alert_key)

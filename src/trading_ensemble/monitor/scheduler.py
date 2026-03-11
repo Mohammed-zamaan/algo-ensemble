@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from trading_ensemble.core.timeutils import now_ist, fmt_utc
 import time
 from datetime import datetime, time as dt_time
 
@@ -108,7 +108,7 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
     control_panel = context.get("control_panel")
     store = context["store"]
 
-    now = datetime.now()
+    now = now_ist()
     cycle_time = now.strftime("%Y-%m-%d %H:%M:%S")
     is_market_open = market_is_open(now)
     is_entry_open = entry_window_open(now)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 import pandas as pd
+
+from trading_ensemble.core.timeutils import fmt_ist
 
 
 def build_run_summary(context) -> pd.DataFrame:
@@ -21,7 +22,7 @@ def build_run_summary(context) -> pd.DataFrame:
         setup_count = int((signals_df["SIGNAL_STATUS"] == "SETUP").sum())
 
     rows = [
-        {"metric": "run_time", "value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+        {"metric": "run_time", "value": fmt_ist()},
         {"metric": "watchlist_symbols", "value": len(watchlist)},
         {"metric": "comet_ranked_symbols", "value": comet_ranked_count},
         {"metric": "shortlisted_candidates", "value": len(candidates_df)},

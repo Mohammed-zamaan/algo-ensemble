@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import pandas as pd
 import gspread
+
+from trading_ensemble.core.timeutils import fmt_ist
 
 
 WORKSHEET_COLUMN_ORDERS = {
@@ -184,7 +184,7 @@ def write_dataframe_to_sheet(
 
     ws.clear()
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = fmt_ist()
     prepared = _prepare_dataframe(worksheet_name, df)
 
     if prepared.empty:

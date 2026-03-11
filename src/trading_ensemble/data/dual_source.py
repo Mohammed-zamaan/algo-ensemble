@@ -5,11 +5,13 @@ Dual-source data layer:
 """
 from __future__ import annotations
 import os, time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional
 import pandas as pd
 import yfinance as yf
 from dotenv import load_dotenv
+
+from trading_ensemble.core.timeutils import now_ist
 
 load_dotenv()
 
@@ -92,9 +94,9 @@ def fetch_yf_candles(nse_symbol: str, period: str = "6mo",
 def fetch_smartapi_candles(symbol_token: str, interval: str = "FIFTEEN_MINUTE", days: int = 30):
     """Delegates to smartapi_client — single session, chunked, retry-safe."""
     from src.trading_ensemble.data.smartapi_client import login_from_env, fetch_candles_chunked
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     session  = login_from_env()
-    end_dt   = datetime.now()
+    end_dt   = now_ist()
     start_dt = end_dt - timedelta(days=days)
     return fetch_candles_chunked(
         session.smart, exchange="NSE", symbol_token=str(symbol_token),

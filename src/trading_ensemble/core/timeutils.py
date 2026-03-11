@@ -17,9 +17,9 @@ def now_utc() -> datetime:
 
 def fmt_ist(dt: datetime | None = None) -> str:
     value = dt or now_ist()
-    return value.strftime("%Y-%m-%d %H:%M:%S")
+    return value.astimezone(IST).isoformat(timespec="seconds")
 
 
 def fmt_utc(dt: datetime | None = None) -> str:
     value = dt or now_utc()
-    return value.strftime("%Y-%m-%d %H:%M:%S")
+    return value.astimezone(UTC).isoformat(timespec="seconds")

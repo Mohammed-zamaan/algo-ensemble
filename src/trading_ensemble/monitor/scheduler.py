@@ -1,5 +1,5 @@
 from __future__ import annotations
-from trading_ensemble.core.timeutils import now_ist, fmt_utc
+from trading_ensemble.core.timeutils import now_ist
 import time
 from datetime import datetime, time as dt_time
 
@@ -289,7 +289,12 @@ def run_trigger_loop(context_factory, max_cycles: int | None = None) -> None:
         control_panel = context.get("control_panel")
         poll_seconds = int(getattr(control_panel, "trigger_poll_seconds", 60)) if control_panel else 60
 
-        run_trigger_cycle(context)
+        try:
+            run_trigger_cycle(context)
+            context["store"].finish_run(context["run_id"], status="COMPLETED", notes="Trigger monitor cycle completed")
+        except Exception as exc:
+            context["store"].finish_run(context["run_id"], status="FAILED", notes=str(exc))
+            raise
 
         cycles += 1
         if max_cycles is not None and cycles >= max_cycles:

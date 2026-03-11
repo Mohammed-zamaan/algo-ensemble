@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
+from trading_ensemble.core.timeutils import fmt_ist, now_ist
 from trading_ensemble.notifications.telegram import send_telegram_message
 
 
@@ -36,14 +36,14 @@ def _already_sent(alert_key: str) -> bool:
 def _mark_sent(alert_key: str) -> None:
     cache = _load_cache()
     new_row = pd.DataFrame(
-        [{"alert_key": alert_key, "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]
+        [{"alert_key": alert_key, "sent_at": fmt_ist()}]
     )
     cache = pd.concat([cache, new_row], ignore_index=True)
     _save_cache(cache)
 
 
 def _day_key() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return now_ist().date().isoformat()
 
 
 def send_near_trigger_alerts(alerts_df: pd.DataFrame) -> None:

@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 
 import pandas as pd
-import yfinance as yf
 from comet_ml import API
 
+from trading_ensemble.data.market_providers import ExecutionMarketDataProvider
 from trading_ensemble.data.sheets_output import maybe_write_output
 from ..engine import PipelineStage
 
@@ -82,25 +82,15 @@ def fetch_top_n_from_comet(api_key: str, workspace: str, project: str, top_n: in
     return df.head(top_n)
 
 
-def get_donchian_and_volume(symbol_eq: str, period: int = 20):
-    ticker = symbol_eq.replace("-EQ", ".NS")
+def get_donchian_and_volume(symbol_eq: str, provider: ExecutionMarketDataProvider, period: int = 20):
     try:
-        df = yf.download(
-            ticker,
-            period="3mo",
-            interval="1d",
-            progress=False,
-            auto_adjust=True,
-        )
-        if df.empty or len(df) < period:
+        df = provider.fetch_mode_candles(symbol_eq, mode="SWING")
+        if df is None or df.empty or len(df) < period + 1:
             return None, None, None
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        high = df["High"].squeeze().astype(float)
-        close = df["Close"].squeeze().astype(float)
-        volume = df["Volume"].squeeze().astype(float)
+        high = df["high"].squeeze().astype(float)
+        close = df["close"].squeeze().astype(float)
+        volume = df["volume"].squeeze().astype(float)
 
         donchian_upper = float(high.rolling(period).max().iloc[-2])
         ltp = float(close.iloc[-1])
@@ -113,7 +103,7 @@ def get_donchian_and_volume(symbol_eq: str, period: int = 20):
         return None, None, None
 
 
-def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
+def apply_elimination_filter(df: pd.DataFrame, provider: ExecutionMarketDataProvider) -> pd.DataFrame:
     results = []
     rejected_score = 0
     rejected_volatility = 0
@@ -136,7 +126,7 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
             rejected_volatility += 1
             eliminated = True
 
-        donchian_upper, ltp, vol_ratio = get_donchian_and_volume(symbol, DONCHIAN_PERIOD)
+        donchian_upper, ltp, vol_ratio = get_donchian_and_volume(symbol, provider, DONCHIAN_PERIOD)
 
         if donchian_upper is None or ltp is None:
             rejected_data += 1
@@ -147,7 +137,7 @@ def apply_elimination_filter(df: pd.DataFrame) -> pd.DataFrame:
         else:
             breakout = ltp >= donchian_upper
             breakout_ready = breakout
-            volume_ready = (vol_ratio is not None and vol_ratio >= MIN_VOLUME_RATIO)
+            volume_ready = vol_ratio is not None and vol_ratio >= MIN_VOLUME_RATIO
 
             if not breakout_ready:
                 breakout_not_ready += 1
@@ -225,7 +215,15 @@ class EliminationStage(PipelineStage):
             maybe_write_output(settings, control_panel, "SelectedCandidates", pd.DataFrame())
             return
 
-        candidates_df = apply_elimination_filter(top_df)
+        try:
+            market_provider = ExecutionMarketDataProvider.from_env()
+        except Exception as exc:
+            print(f"Execution market data provider unavailable: {exc}")
+            context["candidates_df"] = pd.DataFrame()
+            maybe_write_output(settings, control_panel, "SelectedCandidates", pd.DataFrame())
+            return
+
+        candidates_df = apply_elimination_filter(top_df, market_provider)
         context["candidates_df"] = candidates_df
 
         store = context["store"]

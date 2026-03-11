@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, time as dt_time
+from datetime import time as dt_time
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
+from trading_ensemble.core.timeutils import fmt_ist
+from trading_ensemble.data.market_providers import ExecutionMarketDataProvider
 from trading_ensemble.data.sheets_output import maybe_write_output
 from trading_ensemble.strategy.modes import resolve_symbol_modes
 from ..engine import PipelineStage
@@ -20,8 +21,6 @@ MODE_CONFIG = {
         "min_rr": 1.5,
         "volume_mult": 2.0,
         "atr_min": 5.0,
-        "yf_interval": "15m",
-        "yf_period": "5d",
         "product_type": "MIS",
         "entry_after": dt_time(9, 30),
         "exit_before": dt_time(15, 15),
@@ -34,8 +33,6 @@ MODE_CONFIG = {
         "min_rr": 2.0,
         "volume_mult": 1.5,
         "atr_min": 5.0,
-        "yf_interval": "1d",
-        "yf_period": "3mo",
         "product_type": "CNC",
         "entry_after": dt_time(9, 30),
         "exit_before": dt_time(15, 15),
@@ -48,8 +45,6 @@ MODE_CONFIG = {
         "min_rr": 2.5,
         "volume_mult": 1.3,
         "atr_min": 5.0,
-        "yf_interval": "1d",
-        "yf_period": "6mo",
         "product_type": "CNC",
         "entry_after": dt_time(9, 30),
         "exit_before": dt_time(15, 15),
@@ -57,29 +52,11 @@ MODE_CONFIG = {
 }
 
 
-def to_yf_ticker(symbol: str) -> str:
-    return symbol.replace("-EQ", "").strip() + ".NS"
-
-
-def fetch_candles(symbol: str, cfg: dict) -> pd.DataFrame | None:
-    ticker = to_yf_ticker(symbol)
+def fetch_candles(symbol: str, mode: str, provider: ExecutionMarketDataProvider, cfg: dict) -> pd.DataFrame | None:
     try:
-        df = yf.download(
-            ticker,
-            period=cfg["yf_period"],
-            interval=cfg["yf_interval"],
-            progress=False,
-            auto_adjust=True,
-        )
+        df = provider.fetch_mode_candles(symbol, mode)
         if df is None or df.empty:
             return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df.columns = [c.strip().lower() for c in df.columns]
-        df = df[["open", "high", "low", "close", "volume"]].copy()
-        df.dropna(inplace=True)
 
         if len(df) < cfg["donchian_period"] + 5:
             return None
@@ -174,11 +151,11 @@ def get_signal_strength(price_above: bool, vol_ratio: float, atr_ratio: float, a
     return "WEAK"
 
 
-def generate_signal(row: pd.Series, mode: str) -> tuple[dict | None, str]:
+def generate_signal(row: pd.Series, mode: str, provider: ExecutionMarketDataProvider) -> tuple[dict | None, str]:
     cfg = MODE_CONFIG[mode]
     symbol = row["symbol"]
 
-    df = fetch_candles(symbol, cfg)
+    df = fetch_candles(symbol, mode, provider, cfg)
     if df is None:
         return None, "no_data"
 
@@ -217,7 +194,7 @@ def generate_signal(row: pd.Series, mode: str) -> tuple[dict | None, str]:
         "VOLUME_READY": bool(vol_ok),
         "ATR_READY": bool(atr_ok),
         "PRODUCT_TYPE": cfg["product_type"],
-        "SIGNAL_TIME": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "SIGNAL_TIME": fmt_ist(),
     }
 
     # Setup but not triggered yet
@@ -299,6 +276,16 @@ class SignalsStage(PipelineStage):
 
         watchlist_by_symbol = {w.symbol.upper(): w for w in watchlist}
 
+        try:
+            market_provider = ExecutionMarketDataProvider.from_env()
+        except Exception as exc:
+            print(f"Execution market data provider unavailable: {exc}")
+            context["signals_df"] = pd.DataFrame()
+            empty_df = pd.DataFrame()
+            empty_df.to_csv(settings.trade_signals_path, index=False)
+            maybe_write_output(settings, control_panel, "ConfirmedSignals", empty_df)
+            return
+
         signals = []
         diag = {
             "no_data": 0,
@@ -316,7 +303,7 @@ class SignalsStage(PipelineStage):
                 eligible_modes = resolve_symbol_modes(watchlist_obj, settings)
 
             for mode in eligible_modes:
-                result, reason = generate_signal(row, mode)
+                result, reason = generate_signal(row, mode, market_provider)
                 diag[reason] = diag.get(reason, 0) + 1
 
                 if result:

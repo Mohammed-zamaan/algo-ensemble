@@ -14,6 +14,8 @@ import random
 
 import pandas as pd
 import pyotp
+
+from trading_ensemble.core.timestamp_normalizer import normalize_external_timestamp
 from SmartApi import SmartConnect
 
 SCRIPMASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -89,11 +91,22 @@ def _candles_to_df(raw: Any) -> pd.DataFrame:
     data = raw.get("data") or []
     if not data:
         return pd.DataFrame(columns=cols)
+
     df = pd.DataFrame(data, columns=cols)
-    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df["datetime"] = df["datetime"].apply(
+        lambda x: normalize_external_timestamp(
+            source="ANGEL_SMARTAPI_CANDLE",
+            raw_value=x,
+            assume_exchange_local_ist=True,
+            max_future_seconds=120,
+        )
+    )
+    df["datetime"] = df["datetime"].apply(lambda x: x.value_ist if x is not None else None)
+
     for c in ["open", "high", "low", "close", "volume"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["datetime", "open", "high", "low", "close"]).reset_index(drop=True)
+
+    df = df.dropna(subset=["datetime", "open", "high", "low", "close", "volume"]).reset_index(drop=True)
     return df
 
 def fetch_candles_chunked(

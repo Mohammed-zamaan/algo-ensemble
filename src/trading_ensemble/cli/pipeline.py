@@ -1,18 +1,16 @@
 from trading_ensemble.config.settings import Settings
-from trading_ensemble.pipeline.engine import PipelineEngine
-from trading_ensemble.pipeline.summary import build_run_summary
-
 from trading_ensemble.data.sheets_output import maybe_write_output
-
-from trading_ensemble.pipeline.stages.premarket import PremarketStage
+from trading_ensemble.pipeline.engine import PipelineEngine
 from trading_ensemble.pipeline.stages.elimination import EliminationStage
-from trading_ensemble.pipeline.stages.signals import SignalsStage
-from trading_ensemble.pipeline.stages.risk import RiskStage
 from trading_ensemble.pipeline.stages.execution import ExecutionStage
+from trading_ensemble.pipeline.stages.premarket import PremarketStage
+from trading_ensemble.pipeline.stages.risk import RiskStage
+from trading_ensemble.pipeline.stages.signals import SignalsStage
+from trading_ensemble.pipeline.summary import build_run_summary
 from trading_ensemble.state.store import StateStore
 
 
-def main():
+def main() -> None:
     settings = Settings.from_env()
     settings.validate_for_runtime()
 
@@ -40,13 +38,10 @@ def main():
     ]
 
     engine = PipelineEngine(stages)
-from trading_ensemble.pipeline.summary import build_run_summary
-
-from trading_ensemble.data.sheets_output import maybe_write_output
-
 
     try:
         engine.run(context)
+        maybe_write_output(settings, context.get("control_panel"), "RunSummary", build_run_summary(context))
         store.finish_run(run_id, status="COMPLETED")
     except Exception as exc:
         store.finish_run(run_id, status="FAILED", notes=str(exc))

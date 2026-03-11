@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 import pandas as pd
+
+from trading_ensemble.core.timeutils import fmt_ist
 
 
 def _section(title: str) -> list[dict]:
@@ -68,7 +69,7 @@ def build_command_center(context: dict) -> pd.DataFrame:
 
     rows.extend(_section("RUN STATUS"))
     rows.extend(_kv_rows([
-        ("generated_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("generated_at", fmt_ist()),
         ("watchlist_symbols", len(watchlist)),
         ("shortlisted_candidates", len(candidates_df)),
         ("setup_signals", setup_count),

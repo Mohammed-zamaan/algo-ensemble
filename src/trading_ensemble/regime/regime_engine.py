@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 import pandas as pd
-import yfinance as yf
+
+from trading_ensemble.core.timeutils import now_ist
+from trading_ensemble.core.timestamp_normalizer import normalize_external_timestamp
+from trading_ensemble.data.smartapi_client import (
+    fetch_candles_live,
+    load_scrip_master,
+    login_from_env,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -16,26 +28,155 @@ class RegimeSnapshot:
     trend_gap_pct: float
 
 
-def fetch_index_regime(symbol: str = "^NSEI") -> RegimeSnapshot:
+def _unknown_snapshot() -> RegimeSnapshot:
+    return RegimeSnapshot("UNKNOWN", 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def _resolve_index_token(scrip_df: pd.DataFrame, symbol: str) -> str:
+    work = scrip_df.copy()
+    work.columns = [str(c).strip().lower() for c in work.columns]
+    if "token" not in work.columns:
+        raise RuntimeError("Scrip master missing token column")
+
+    sym = str(symbol).strip().upper()
+    exch_col = work["exch_seg"].astype(str).str.upper() if "exch_seg" in work.columns else pd.Series([""] * len(work))
+    sym_col = work["symbol"].astype(str).str.upper() if "symbol" in work.columns else pd.Series([""] * len(work))
+    name_col = work["name"].astype(str).str.upper() if "name" in work.columns else pd.Series([""] * len(work))
+
+    search_terms = [sym, "NIFTY", "NIFTY 50", "NIFTY50", "NIFTY-I"]
+
+    for term in search_terms:
+        exact = work[(exch_col == "NSE") & (sym_col == term)]
+        if not exact.empty:
+            return str(exact.iloc[0]["token"])
+
+    for term in search_terms:
+        by_name = work[(exch_col == "NSE") & (name_col.str.contains(term, na=False))]
+        if not by_name.empty:
+            return str(by_name.iloc[0]["token"])
+
+    raise RuntimeError(f"Unable to resolve SmartAPI token for index symbol={symbol}")
+
+
+def _fetch_index_candles(symbol: str) -> tuple[pd.DataFrame | None, dict]:
+    now = now_ist()
+    start = (now - timedelta(days=120)).strftime("%Y-%m-%d %H%M")
+    end = now.strftime("%Y-%m-%d %H%M")
+
+    source = "ANGEL_SMARTAPI"
     try:
-        df = yf.download(
-            symbol,
-            period="3mo",
-            interval="1d",
-            progress=False,
-            auto_adjust=True,
+        session = login_from_env()
+        scrip_df = load_scrip_master()
+        token = _resolve_index_token(scrip_df, symbol)
+        candles = fetch_candles_live(
+            session.smart,
+            exchange="NSE",
+            symbol_token=token,
+            interval="ONE_DAY",
+            start=start,
+            end=end,
         )
+    except Exception as exc:
+        logger.error(json.dumps({
+            "event": "regime_input_fetch_failed",
+            "source": source,
+            "symbol": symbol,
+            "reason": str(exc),
+        }))
+        return None, {"source": source, "reason": str(exc)}
+
+    if candles is None or candles.empty:
+        reason = "EMPTY_DATA"
+        logger.warning(json.dumps({
+            "event": "regime_input_fetch_failed",
+            "source": source,
+            "symbol": symbol,
+            "reason": reason,
+        }))
+        return None, {"source": source, "reason": reason}
+
+    work = candles.copy()
+    work.columns = [str(c).strip().lower() for c in work.columns]
+    required = ["datetime", "high", "low", "close"]
+    if any(c not in work.columns for c in required):
+        reason = "INCOMPLETE_COLUMNS"
+        logger.warning(json.dumps({
+            "event": "regime_input_fetch_failed",
+            "source": source,
+            "symbol": symbol,
+            "reason": reason,
+            "columns": list(work.columns),
+        }))
+        return None, {"source": source, "reason": reason}
+
+    work = work[required].dropna().reset_index(drop=True)
+    if work.empty:
+        return None, {"source": source, "reason": "EMPTY_AFTER_CLEAN"}
+
+    parsed = work["datetime"].apply(
+        lambda raw: normalize_external_timestamp(
+            source="REGIME_INPUT_CANDLE",
+            raw_value=raw,
+            assume_exchange_local_ist=True,
+            max_future_seconds=180,
+        )
+    )
+    work["datetime"] = parsed.apply(lambda x: x.value_ist if x else None)
+    work = work.dropna(subset=["datetime"]).reset_index(drop=True)
+    if work.empty:
+        return None, {"source": source, "reason": "MALFORMED_TIMESTAMPS"}
+
+    latest_ts = work["datetime"].iloc[-1]
+    freshness_hours = max(0.0, (now - latest_ts).total_seconds() / 3600.0)
+    if freshness_hours > 60.0:
+        reason = "STALE_INPUT"
+        logger.warning(json.dumps({
+            "event": "regime_input_stale",
+            "source": source,
+            "symbol": symbol,
+            "timestamp": latest_ts.isoformat(),
+            "freshness_hours": round(freshness_hours, 3),
+            "reason": reason,
+        }))
+        return None, {"source": source, "reason": reason, "freshness_hours": freshness_hours}
+
+    logger.info(json.dumps({
+        "event": "regime_input_ready",
+        "source": source,
+        "symbol": symbol,
+        "timestamp": latest_ts.isoformat(),
+        "freshness_hours": round(freshness_hours, 3),
+        "rows": len(work),
+    }))
+
+    return work, {
+        "source": source,
+        "freshness_hours": freshness_hours,
+        "latest_timestamp": latest_ts.isoformat(),
+    }
+
+
+def fetch_index_regime(symbol: str = "NIFTY") -> RegimeSnapshot:
+    try:
+        df, meta = _fetch_index_candles(symbol)
         if df is None or df.empty:
-            return RegimeSnapshot("UNKNOWN", 0.0, 0.0, 0.0, 0.0, 0.0)
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        df = df[["high", "low", "close"]].copy().dropna()
+            logger.warning(json.dumps({
+                "event": "regime_evaluation_blocked",
+                "symbol": symbol,
+                "reason": (meta or {}).get("reason", "UNKNOWN"),
+                "source": (meta or {}).get("source", "UNKNOWN"),
+            }))
+            return _unknown_snapshot()
 
         if len(df) < 25:
-            return RegimeSnapshot("UNKNOWN", 0.0, 0.0, 0.0, 0.0, 0.0)
+            logger.warning(json.dumps({
+                "event": "regime_evaluation_blocked",
+                "symbol": symbol,
+                "source": (meta or {}).get("source", "UNKNOWN"),
+                "reason": "INSUFFICIENT_ROWS",
+                "rows": len(df),
+            }))
+            return _unknown_snapshot()
 
         high = df["high"].astype(float)
         low = df["low"].astype(float)
@@ -59,7 +200,6 @@ def fetch_index_regime(symbol: str = "^NSEI") -> RegimeSnapshot:
         index_sma20 = float(sma20.iloc[-1])
         trend_gap_pct = ((index_price - index_sma20) / index_sma20) * 100.0 if index_sma20 else 0.0
 
-        # lightweight ADX-like proxy
         adx_like = min(abs(trend_gap_pct) * 8.0, 100.0)
 
         daily_return_pct = ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100.0 if len(close) >= 2 else 0.0
@@ -82,8 +222,13 @@ def fetch_index_regime(symbol: str = "^NSEI") -> RegimeSnapshot:
             index_sma20=round(index_sma20, 2),
             trend_gap_pct=round(trend_gap_pct, 4),
         )
-    except Exception:
-        return RegimeSnapshot("UNKNOWN", 0.0, 0.0, 0.0, 0.0, 0.0)
+    except Exception as exc:
+        logger.error(json.dumps({
+            "event": "regime_evaluation_failed",
+            "symbol": symbol,
+            "reason": str(exc),
+        }))
+        return _unknown_snapshot()
 
 
 def apply_regime_overrides(control_panel, regime_snapshot: RegimeSnapshot) -> dict:

@@ -1,5 +1,6 @@
-from datetime import datetime
 from typing import List
+
+from trading_ensemble.core.timeutils import fmt_ist
 
 
 class PipelineStage:
@@ -18,7 +19,7 @@ class PipelineEngine:
 
         print("=" * 60)
         print("TRADING PIPELINE START")
-        print(datetime.utcnow())
+        print(fmt_ist())
         print("=" * 60)
 
         for stage in self.stages:

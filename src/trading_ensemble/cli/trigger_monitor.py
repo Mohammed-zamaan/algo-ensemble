@@ -4,8 +4,8 @@ import argparse
 
 from trading_ensemble.config.control_panel import load_control_panel
 from trading_ensemble.config.settings import Settings
-from trading_ensemble.state.store import StateStore
 from trading_ensemble.monitor.scheduler import run_trigger_cycle, run_trigger_loop
+from trading_ensemble.state.store import StateStore
 
 
 def build_context() -> dict:
@@ -33,31 +33,23 @@ def build_context() -> dict:
     }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 20A trigger monitor skeleton")
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Run exactly one monitor cycle and exit.",
-    )
-    parser.add_argument(
-        "--cycles",
-        type=int,
-        default=None,
-        help="Run N cycles then exit.",
-    )
+    parser.add_argument("--once", action="store_true", help="Run exactly one monitor cycle and exit.")
+    parser.add_argument("--cycles", type=int, default=None, help="Run N cycles then exit.")
     args = parser.parse_args()
 
     if args.once:
         context = build_context()
-        run_trigger_cycle(context)
-        context["store"].finish_run(context["run_id"], status="COMPLETED", notes="Trigger monitor single cycle")
+        try:
+            run_trigger_cycle(context)
+            context["store"].finish_run(context["run_id"], status="COMPLETED", notes="Trigger monitor single cycle")
+        except Exception as exc:
+            context["store"].finish_run(context["run_id"], status="FAILED", notes=str(exc))
+            raise
         return
 
-    run_trigger_loop(
-        context_factory=build_context,
-        max_cycles=args.cycles,
-    )
+    run_trigger_loop(context_factory=build_context, max_cycles=args.cycles)
 
 
 if __name__ == "__main__":

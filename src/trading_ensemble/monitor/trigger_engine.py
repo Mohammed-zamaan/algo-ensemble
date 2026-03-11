@@ -1,25 +1,138 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
-import yfinance as yf
+
+from trading_ensemble.core.timeutils import fmt_ist, now_ist
+from trading_ensemble.core.timestamp_normalizer import normalize_external_timestamp
+from trading_ensemble.data.smartapi_client import (
+    load_scrip_master,
+    login_from_env,
+    resolve_symbol_to_token_offline,
+)
+
+logger = logging.getLogger(__name__)
 
 
-def to_yf_ticker(symbol: str) -> str:
-    return symbol.replace("-EQ", "").strip() + ".NS"
-
-
-def mode_to_market_data(mode: str) -> dict[str, str]:
+def mode_to_market_data(mode: str) -> dict[str, Any]:
     mode = str(mode).upper()
     if mode == "INTRADAY":
-        return {"period": "2d", "interval": "15m"}
+        return {
+            "interval": "FIFTEEN_MINUTE",
+            "lookback_days": 3,
+            "donchian_period": 20,
+            "max_age_minutes": 20,
+        }
     if mode == "SWING":
-        return {"period": "3mo", "interval": "1d"}
+        return {
+            "interval": "ONE_DAY",
+            "lookback_days": 120,
+            "donchian_period": 20,
+            "max_age_minutes": 60 * 36,
+        }
     if mode == "POSITIONAL":
-        return {"period": "6mo", "interval": "1d"}
-    return {"period": "2d", "interval": "15m"}
+        return {
+            "interval": "ONE_DAY",
+            "lookback_days": 240,
+            "donchian_period": 55,
+            "max_age_minutes": 60 * 36,
+        }
+    return {
+        "interval": "FIFTEEN_MINUTE",
+        "lookback_days": 3,
+        "donchian_period": 20,
+        "max_age_minutes": 20,
+    }
+
+
+@dataclass
+class ExecutionDataProvider:
+    smart: Any
+    scrip_df: pd.DataFrame
+
+    @classmethod
+    def from_env(cls) -> "ExecutionDataProvider":
+        session = login_from_env()
+        return cls(smart=session.smart, scrip_df=load_scrip_master())
+
+    def fetch_candles(self, symbol: str, mode: str) -> pd.DataFrame:
+        cfg = mode_to_market_data(mode)
+        _, token = resolve_symbol_to_token_offline(symbol, exchange="NSE", scrip_df=self.scrip_df)
+        now = now_ist().replace(tzinfo=None)
+        start = (now - timedelta(days=int(cfg["lookback_days"]))).strftime("%Y-%m-%d %H%M")
+        end = now.strftime("%Y-%m-%d %H%M")
+
+        params = {
+            "exchange": "NSE",
+            "symboltoken": str(token),
+            "interval": str(cfg["interval"]),
+            "fromdate": start,
+            "todate": end,
+        }
+        raw = self.smart.getCandleData(params)
+        return _candles_to_frame(raw)
+
+
+@dataclass
+class ReferenceDataProvider:
+    def fetch_last_price(self, symbol: str) -> float | None:
+        try:
+            from jugaad_trader.nse import NSELive
+
+            quote = NSELive().stock_quote(symbol.replace("-EQ", "").strip().upper())
+            info = quote.get("priceInfo", {})
+            last_price = info.get("lastPrice")
+
+            raw_ts = (
+                quote.get("metadata", {}).get("lastUpdateTime")
+                or quote.get("metadata", {}).get("lastUpdateDate")
+                or info.get("lastUpdateTime")
+            )
+            if raw_ts is not None:
+                normalize_external_timestamp(
+                    source="NSE_REFERENCE_QUOTE",
+                    raw_value=raw_ts,
+                    assume_exchange_local_ist=True,
+                    max_future_seconds=120,
+                    max_age_minutes=30,
+                )
+
+            return float(last_price) if last_price is not None else None
+        except Exception:
+            return None
+
+
+def _candles_to_frame(raw: Any) -> pd.DataFrame:
+    cols = ["datetime", "open", "high", "low", "close", "volume"]
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if not data:
+        return pd.DataFrame(columns=cols)
+
+    df = pd.DataFrame(data, columns=cols)
+    df["datetime"] = df["datetime"].apply(
+        lambda x: normalize_external_timestamp(
+            source="ANGEL_SMARTAPI_TRIGGER",
+            raw_value=x,
+            assume_exchange_local_ist=True,
+            max_future_seconds=120,
+        )
+    )
+    df["datetime"] = df["datetime"].apply(lambda x: x.value_ist if x is not None else None)
+
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.dropna(subset=["datetime", "open", "high", "low", "close", "volume"])
+    return df.sort_values("datetime").drop_duplicates(subset=["datetime"]).reset_index(drop=True)
+
+
+def _age_minutes(latest_candle_ts: datetime, now: datetime) -> float:
+    return max(0.0, (now - latest_candle_ts).total_seconds() / 60.0)
 
 
 def _safe_gap_pct(current: float, required: float) -> float:
@@ -64,49 +177,98 @@ def load_setup_signals(store) -> pd.DataFrame:
 
 def fetch_latest_market_snapshot(symbol: str, mode: str) -> dict[str, Any] | None:
     cfg = mode_to_market_data(mode)
-    ticker = to_yf_ticker(symbol)
+    reference_invoked = False
+    mismatch_outcome = "NOT_INVOKED"
 
     try:
-        df = yf.download(
-            ticker,
-            period=cfg["period"],
-            interval=cfg["interval"],
-            progress=False,
-            auto_adjust=True,
-        )
-        if df is None or df.empty:
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        df = df[["open", "high", "low", "close", "volume"]].copy().dropna()
-        if df.empty:
-            return None
-
-        latest = df.iloc[-1]
-
-        donchian_period = 20 if str(mode).upper() in {"INTRADAY", "SWING"} else 55
-        if len(df) >= donchian_period:
-            live_donchian_upper = float(df["high"].rolling(donchian_period).max().iloc[-2])
-            avg_volume = float(df["volume"].iloc[-donchian_period - 1 : -1].mean()) if len(df) >= donchian_period + 1 else float(df["volume"].mean())
-        else:
-            live_donchian_upper = float(df["high"].max())
-            avg_volume = float(df["volume"].mean())
-
-        return {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "close": float(latest["close"]),
-            "high": float(latest["high"]),
-            "low": float(latest["low"]),
-            "volume": float(latest["volume"]),
-            "avg_volume": avg_volume,
-            "live_donchian_upper": live_donchian_upper,
-            "rows": len(df),
-        }
-    except Exception:
+        execution_provider = ExecutionDataProvider.from_env()
+        angel_df = execution_provider.fetch_candles(symbol, mode)
+    except Exception as exc:
+        logger.error(json.dumps({
+            "event": "trigger_data_error",
+            "symbol": symbol,
+            "mode": str(mode).upper(),
+            "source_used": "ANGEL_SMARTAPI",
+            "error": str(exc),
+            "nse_verification_invoked": False,
+        }))
         return None
+
+    if angel_df.empty:
+        logger.warning(json.dumps({
+            "event": "trigger_data_invalid",
+            "symbol": symbol,
+            "mode": str(mode).upper(),
+            "source_used": "ANGEL_SMARTAPI",
+            "reason": "EMPTY_CANDLES",
+            "nse_verification_invoked": False,
+        }))
+        return None
+
+    latest = angel_df.iloc[-1]
+    latest_ts = latest["datetime"]
+    now = now_ist()
+    freshness_minutes = _age_minutes(latest_ts, now)
+    min_rows = int(cfg["donchian_period"]) + 2
+    complete_enough = len(angel_df) >= min_rows
+    fresh_enough = freshness_minutes <= float(cfg["max_age_minutes"])
+    suspicious_or_stale = (not complete_enough) or (not fresh_enough)
+
+    if suspicious_or_stale:
+        reference_invoked = True
+        ref_provider = ReferenceDataProvider()
+        ref_last_price = ref_provider.fetch_last_price(symbol)
+        if ref_last_price is None:
+            mismatch_outcome = "NSE_UNAVAILABLE"
+        else:
+            angel_close = float(latest["close"])
+            diff_pct = abs(angel_close - ref_last_price) / max(angel_close, 1e-9) * 100
+            mismatch_outcome = "MISMATCH" if diff_pct > 1.5 else "MATCH"
+
+    if (not complete_enough) or (not fresh_enough) or (mismatch_outcome == "MISMATCH"):
+        logger.warning(json.dumps({
+            "event": "trigger_data_blocked",
+            "symbol": symbol,
+            "mode": str(mode).upper(),
+            "source_used": "ANGEL_SMARTAPI",
+            "candle_timestamp": latest_ts.strftime("%Y-%m-%d %H:%M:%S"),
+            "freshness_age_minutes": round(freshness_minutes, 2),
+            "nse_verification_invoked": reference_invoked,
+            "mismatch_outcome": mismatch_outcome,
+            "complete_enough": complete_enough,
+            "fresh_enough": fresh_enough,
+        }))
+        return None
+
+    donchian_period = int(cfg["donchian_period"])
+    if len(angel_df) >= donchian_period + 1:
+        live_donchian_upper = float(angel_df["high"].rolling(donchian_period).max().iloc[-2])
+        avg_volume = float(angel_df["volume"].iloc[-donchian_period - 1 : -1].mean())
+    else:
+        live_donchian_upper = float(angel_df["high"].max())
+        avg_volume = float(angel_df["volume"].mean())
+
+    logger.info(json.dumps({
+        "event": "trigger_data_ready",
+        "symbol": symbol,
+        "mode": str(mode).upper(),
+        "source_used": "ANGEL_SMARTAPI",
+        "candle_timestamp": latest_ts.strftime("%Y-%m-%d %H:%M:%S"),
+        "freshness_age_minutes": round(freshness_minutes, 2),
+        "nse_verification_invoked": reference_invoked,
+        "mismatch_outcome": mismatch_outcome,
+    }))
+
+    return {
+        "timestamp": fmt_ist(),
+        "close": float(latest["close"]),
+        "high": float(latest["high"]),
+        "low": float(latest["low"]),
+        "volume": float(latest["volume"]),
+        "avg_volume": avg_volume,
+        "live_donchian_upper": live_donchian_upper,
+        "rows": len(angel_df),
+    }
 
 
 def evaluate_setup_for_promotion(row: pd.Series, snapshot: dict[str, Any] | None) -> dict[str, Any]:
@@ -214,16 +376,20 @@ def has_open_position(store, symbol: str) -> bool:
 
 
 def has_existing_order_today(store, symbol: str) -> bool:
+    now = now_ist()
+    day_start_ist = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+    next_day_start_ist = (now.replace(hour=0, minute=0, second=0, microsecond=0) + pd.Timedelta(days=1)).isoformat(timespec="seconds")
     with store.connect() as conn:
         row = conn.execute(
             """
             SELECT 1
             FROM orders
             WHERE symbol = ?
-              AND date(created_at) = date('now')
+              AND created_at >= ?
+              AND created_at < ?
             LIMIT 1
             """,
-            (symbol,),
+            (symbol, day_start_ist, next_day_start_ist),
         ).fetchone()
     return row is not None
 
@@ -254,7 +420,7 @@ def convert_promotions_to_signals(promoted_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     rows = []
-    promoted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    promoted_at = fmt_ist()
 
     for _, row in promoted_df.iterrows():
         rows.append(

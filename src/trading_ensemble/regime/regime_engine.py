@@ -62,7 +62,12 @@ def fetch_index_regime(symbol: str = "^NSEI") -> RegimeSnapshot:
         # lightweight ADX-like proxy
         adx_like = min(abs(trend_gap_pct) * 8.0, 100.0)
 
-        if atr_pct >= 2.2:
+        daily_return_pct = ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100.0 if len(close) >= 2 else 0.0
+        high_low_pct = ((high.iloc[-1] - low.iloc[-1]) / close.iloc[-1]) * 100.0 if close.iloc[-1] else 0.0
+
+        if atr_pct >= 2.8 or abs(daily_return_pct) >= 2.5 or high_low_pct >= 3.5:
+            regime = "CRISIS"
+        elif atr_pct >= 2.2:
             regime = "HIGH_VOL"
         elif abs(trend_gap_pct) >= 1.0:
             regime = "TREND"
@@ -88,10 +93,12 @@ def apply_regime_overrides(control_panel, regime_snapshot: RegimeSnapshot) -> di
     trend_risk = float(getattr(control_panel, "trend_risk_multiplier", 1.15)) if control_panel else 1.15
     chop_risk = float(getattr(control_panel, "chop_risk_multiplier", 0.6)) if control_panel else 0.6
     high_vol_risk = float(getattr(control_panel, "high_vol_risk_multiplier", 0.5)) if control_panel else 0.5
+    crisis_risk = float(getattr(control_panel, "crisis_risk_multiplier", 0.25)) if control_panel else 0.25
 
     trend_orders = int(getattr(control_panel, "trend_max_new_orders", base_orders)) if control_panel else base_orders
     chop_orders = int(getattr(control_panel, "chop_max_new_orders", max(1, min(2, base_orders)))) if control_panel else max(1, min(2, base_orders))
     high_vol_orders = int(getattr(control_panel, "high_vol_max_new_orders", 1)) if control_panel else 1
+    crisis_orders = int(getattr(control_panel, "crisis_max_new_orders", 1)) if control_panel else 1
 
     regime = regime_snapshot.regime
 
@@ -112,6 +119,12 @@ def apply_regime_overrides(control_panel, regime_snapshot: RegimeSnapshot) -> di
             "market_regime": regime,
             "effective_risk_multiplier": round(base_risk * high_vol_risk, 4),
             "effective_max_new_orders_per_run": high_vol_orders,
+        }
+    if regime == "CRISIS":
+        return {
+            "market_regime": regime,
+            "effective_risk_multiplier": round(base_risk * crisis_risk, 4),
+            "effective_max_new_orders_per_run": crisis_orders,
         }
 
     return {

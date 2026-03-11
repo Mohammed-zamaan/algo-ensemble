@@ -136,6 +136,10 @@ def run_trigger_cycle(context: dict) -> pd.DataFrame:
     print(f"  effective_risk_mult  = {context['effective_risk_multiplier']}")
     print(f"  effective_max_orders = {context['effective_max_new_orders_per_run']}")
 
+    if context["market_regime"] == "CRISIS" and getattr(control_panel, "crisis_pause_new_entries", False):
+        print("  crisis mode active: new entries paused")
+        return pd.DataFrame()
+
     setups_df = load_setup_signals(store)
     setups_df = dedupe_setup_rows(setups_df)
 

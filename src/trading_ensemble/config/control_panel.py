@@ -34,6 +34,9 @@ class ControlPanel:
     trend_max_new_orders: int = 4
     chop_max_new_orders: int = 2
     high_vol_max_new_orders: int = 1
+    crisis_risk_multiplier: float = 0.25
+    crisis_max_new_orders: int = 1
+    crisis_pause_new_entries: bool = False
 
     # Phase 20A — trigger monitor controls
     trigger_monitor_enabled: bool = True
@@ -126,6 +129,9 @@ def build_control_panel(raw: dict[str, object]) -> ControlPanel:
         trend_max_new_orders=_to_int(raw.get("trend_max_new_orders"), 4),
         chop_max_new_orders=_to_int(raw.get("chop_max_new_orders"), 2),
         high_vol_max_new_orders=_to_int(raw.get("high_vol_max_new_orders"), 1),
+        crisis_risk_multiplier=_to_float(raw.get("crisis_risk_multiplier"), 0.25),
+        crisis_max_new_orders=_to_int(raw.get("crisis_max_new_orders"), 1),
+        crisis_pause_new_entries=_to_bool(raw.get("crisis_pause_new_entries"), False),
     
 
         # Phase 20A — trigger monitor controls

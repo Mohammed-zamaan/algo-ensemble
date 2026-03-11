@@ -81,6 +81,7 @@ def build_command_center(context: dict) -> pd.DataFrame:
         ("market_regime", context.get("market_regime", "UNKNOWN")),
         ("effective_risk_multiplier", context.get("effective_risk_multiplier", "")),
         ("effective_max_new_orders", context.get("effective_max_new_orders_per_run", "")),
+        ("crisis_pause_new_entries", getattr(control_panel, "crisis_pause_new_entries", False) if control_panel else False),
     ]))
 
     rows.extend(_table_rows(

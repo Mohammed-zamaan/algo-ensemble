@@ -314,15 +314,15 @@ class SignalsStage(PipelineStage):
 
         signals_df = pd.DataFrame(signals)
         if not signals_df.empty:
-
             signals_df["STATUS_SORT"] = signals_df["SIGNAL_STATUS"].map({"CONFIRMED": 0, "SETUP": 1}).fillna(9)
 
+            for col in ["TRIGGER_READINESS_SCORE", "SETUP_QUALITY_SCORE", "COMPOSITE_SCORE"]:
+                if col not in signals_df.columns:
+                    signals_df[col] = 0.0
+
             signals_df = signals_df.sort_values(
-
                 ["STATUS_SORT", "TRIGGER_READINESS_SCORE", "SETUP_QUALITY_SCORE", "COMPOSITE_SCORE"],
-
                 ascending=[True, False, False, False],
-
             ).drop(columns=["STATUS_SORT"]).reset_index(drop=True)
 
         context["signals_df"] = signals_df

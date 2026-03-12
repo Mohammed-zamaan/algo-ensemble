@@ -130,8 +130,8 @@ def fetch_candles_chunked(
 
     pieces: List[pd.DataFrame] = []
     for a, b in _split_date_ranges(start_dt, end_dt, chunk_days=chunk_days):
-        from_dt = a.strftime("%Y-%m-%d %H%M")
-        to_dt = b.strftime("%Y-%m-%d %H%M")
+        from_dt = a.strftime("%Y-%m-%d %H:%M")
+        to_dt = b.strftime("%Y-%m-%d %H:%M")
 
         time.sleep(sleep_seconds + random.uniform(0, 0.35))
 
@@ -223,7 +223,7 @@ def fetch_candles_live(
         interval=interval,
         start=start,
         end=end,
-        chunk_days=1,
+        chunk_days=60,
         sleep_seconds=0.5,
         max_retries=3,
     )

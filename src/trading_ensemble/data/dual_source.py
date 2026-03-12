@@ -101,8 +101,8 @@ def fetch_smartapi_candles(symbol_token: str, interval: str = "FIFTEEN_MINUTE", 
     return fetch_candles_chunked(
         session.smart, exchange="NSE", symbol_token=str(symbol_token),
         interval=interval,
-        start=start_dt.strftime("%Y-%m-%d 0915"),
-        end=end_dt.strftime("%Y-%m-%d 1530"),
+        start=start_dt.strftime("%Y-%m-%d 09:15"),
+        end=end_dt.strftime("%Y-%m-%d 15:30"),
         chunk_days=60,
     )
 

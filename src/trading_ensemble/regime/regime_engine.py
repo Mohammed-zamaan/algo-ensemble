@@ -60,8 +60,8 @@ def _resolve_index_token(scrip_df: pd.DataFrame, symbol: str) -> str:
 
 def _fetch_index_candles(symbol: str) -> tuple[pd.DataFrame | None, dict]:
     now = now_ist()
-    start = (now - timedelta(days=120)).strftime("%Y-%m-%d %H%M")
-    end = now.strftime("%Y-%m-%d %H%M")
+    start = (now - timedelta(days=120)).strftime("%Y-%m-%d %H:%M")
+    end = now.strftime("%Y-%m-%d %H:%M")
 
     source = "ANGEL_SMARTAPI"
     try:

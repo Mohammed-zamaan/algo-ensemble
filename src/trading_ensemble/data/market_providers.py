@@ -52,8 +52,8 @@ class ExecutionMarketDataProvider:
         _, token = resolve_symbol_to_token_offline(symbol, exchange="NSE", scrip_df=self.scrip_df)
 
         now = now_ist()
-        start = (now - timedelta(days=int(cfg["lookback_days"]))).strftime("%Y-%m-%d %H%M")
-        end = now.strftime("%Y-%m-%d %H%M")
+        start = (now - timedelta(days=int(cfg["lookback_days"]))).strftime("%Y-%m-%d %H:%M")
+        end = now.strftime("%Y-%m-%d %H:%M")
 
         df = fetch_candles_live(
             self.smart,

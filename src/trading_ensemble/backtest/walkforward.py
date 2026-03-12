@@ -41,6 +41,14 @@ def run_walkforward(config: BacktestConfig, windows: list[WalkForwardWindow]) ->
             stop_loss_pct=config.stop_loss_pct,
             target_pct=config.target_pct,
             position_notional_frac=config.position_notional_frac,
+            breakout_lookback=config.breakout_lookback,
+            avg_volume_lookback=config.avg_volume_lookback,
+            volume_multiplier=config.volume_multiplier,
+            max_hold_days=config.max_hold_days,
+            data_source=config.data_source,
+            cache_dir=config.cache_dir,
+            smartapi_exchange=config.smartapi_exchange,
+            smartapi_interval=config.smartapi_interval,
         )
         outputs.append(BacktestEngine.from_config(window_cfg).run())
     return outputs

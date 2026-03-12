@@ -39,18 +39,31 @@ class PortfolioEngine:
             return None
         if not self.can_open(session_date):
             return None
+        qty = float(qty)
+        entry_price = float(entry_price)
+        notional = qty * entry_price
+        if qty <= 0 or entry_price <= 0 or notional > float(self.cash):
+            return None
         position = {
             "symbol": symbol,
-            "qty": float(qty),
-            "entry_price": float(entry_price),
+            "qty": qty,
+            "entry_price": entry_price,
+            "entry_notional": notional,
             "entry_ts": str(promoted_ts),
             "trigger_ts": str(trigger_ts),
             "promoted_ts": str(promoted_ts),
             "session_date": session_date,
+            "bars_held": 0,
         }
+        self.cash -= notional
         self.positions[symbol] = position
         self.opened_today += 1
         return position
+
+    def increment_holding_period(self, symbol: str) -> None:
+        position = self.positions.get(symbol)
+        if position is not None:
+            position["bars_held"] = int(position.get("bars_held", 0)) + 1
 
     def close_position(self, *, symbol: str, exit_price: float, exit_reason: str, exit_ts: str) -> dict | None:
         position = self.positions.pop(symbol, None)
@@ -58,27 +71,43 @@ class PortfolioEngine:
             return None
         qty = float(position["qty"])
         entry_price = float(position["entry_price"])
-        pnl = (float(exit_price) - entry_price) * qty
-        self.cash += pnl
-        pnl_pct = ((float(exit_price) / entry_price) - 1.0) if entry_price else 0.0
+        exit_price = float(exit_price)
+        exit_notional = exit_price * qty
+        self.cash += exit_notional
+        pnl = (exit_price - entry_price) * qty
+        pnl_pct = ((exit_price / entry_price) - 1.0) if entry_price else 0.0
         return {
             "session_date": position["session_date"],
             "symbol": symbol,
             "qty": qty,
             "entry_price": round(entry_price, 6),
-            "exit_price": round(float(exit_price), 6),
+            "exit_price": round(exit_price, 6),
             "entry_ts": position["entry_ts"],
             "trigger_ts": position["trigger_ts"],
             "promotion_ts": position["promoted_ts"],
             "exit_ts": str(exit_ts),
+            "bars_held": int(position.get("bars_held", 0)),
+            "entry_notional": round(float(position.get("entry_notional", 0.0)), 6),
+            "exit_notional": round(exit_notional, 6),
             "exit_reason": exit_reason,
             "pnl": round(pnl, 6),
             "pnl_pct": round(pnl_pct, 6),
         }
 
-    def snapshot(self) -> dict:
+    def market_value(self, price_by_symbol: dict[str, float] | None = None) -> float:
+        if not price_by_symbol:
+            return 0.0
+        total = 0.0
+        for symbol, position in self.positions.items():
+            price = float(price_by_symbol.get(symbol, position["entry_price"]))
+            total += price * float(position["qty"])
+        return total
+
+    def snapshot(self, price_by_symbol: dict[str, float] | None = None) -> dict:
+        market_value = self.market_value(price_by_symbol)
         return {
             "cash": float(self.cash),
             "positions": dict(self.positions),
-            "equity": float(self.cash),
+            "market_value": float(market_value),
+            "equity": float(self.cash + market_value),
         }
